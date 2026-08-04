@@ -736,9 +736,10 @@ def consulta_simple_sistema(query, df_res):
     n_banco = df_res["Banco"].nunique() if "Banco" in df_res.columns else 0
     q = normalizar_texto(query)
     if n_ind <= 3 and n_banco <= 2 and not any(p in q for p in ("equilibrado", "compara", "versus")):
-        return True
-    return False
-
+    # Si hay bancos específicos, no tratar como sistema
+    if bancos := extraer_bancos(query):
+        return False
+    return True
 
 class ConsultaStrategy(ABC):
     @abstractmethod
