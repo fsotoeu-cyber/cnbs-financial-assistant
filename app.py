@@ -10,13 +10,15 @@ from collections import defaultdict
 from abc import ABC, abstractmethod
 import logging
 
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
 class Config:
     MODEL_NAME = "llama-3.3-70b-versatile"
     TEMPERATURE = 0.0
     TOP_RESULTS = 14
     ENTIDADES_AGREGADAS = ["BANCOS", "HONDURAS", "Sistema", "SISTEMA", "SISTEMA BANCARIO"]
     PRIORIDAD_TEMAS = ["credito", "riesgo", "salud", "rentabilidad", "solvencia", "liquidez"]
-    # Umbrales del score triple (configurables; no hardcode de bancos)
     SCORE_TRIPLE_EXCELENTE = 1.5
     SCORE_TRIPLE_BUENO = 0.8
     FORMULA_SCORE_TRIPLE = "(ROE / Morosidad) × (Capital / 100)"
@@ -24,9 +26,21 @@ class Config:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("agente_cnbs")
 
+# ============================================================
+# AGENTES PARALELOS (opcional)
+# ============================================================
+try:
+    from agentes_paralelos import analisis_paralelo_simple
+    AGENTES_PARALELOS_DISPONIBLE = True
+except ImportError:
+    AGENTES_PARALELOS_DISPONIBLE = False
+    def analisis_paralelo_simple(llm, df, ctx):
+        return "⚠️ Módulo de agentes paralelos no disponible. Instala agentes_paralelos.py"
 
+# ============================================================
+# FUNCIONES AUXILIARES
+# ============================================================
 def nivel_score(valor, excelente=None, bueno=None):
-    """Clasifica un score numérico en etiqueta/emoji según umbrales de Config."""
     excelente = Config.SCORE_TRIPLE_EXCELENTE if excelente is None else excelente
     bueno = Config.SCORE_TRIPLE_BUENO if bueno is None else bueno
     try:
@@ -39,9 +53,7 @@ def nivel_score(valor, excelente=None, bueno=None):
         return "Bueno", "🟡"
     return "Bajo", "🔴"
 
-
 def columnas_ranking(df_res):
-    """Detecta tipo de ranking por columnas presentes (sin hardcode de bancos)."""
     if df_res is None or df_res.empty:
         return None
     cols = set(df_res.columns)
@@ -53,9 +65,7 @@ def columnas_ranking(df_res):
         return "roe_capital"
     return None
 
-
 def conclusion_ranking(df_res, tipo=None):
-    """Conclusión automática desde el DataFrame (determinística)."""
     if df_res is None or df_res.empty or "Banco" not in df_res.columns:
         return ""
     tipo = tipo or columnas_ranking(df_res)
@@ -86,7 +96,6 @@ def conclusion_ranking(df_res, tipo=None):
             f"entre los {n} bancos analizados{anio} (Score ROE×Capital/100 = {sc:.2f})."
         )
     return f"**Conclusión:** **{banco}** ocupa el primer lugar del ranking calculado por Pandas{anio}."
-
 
 def aplanar_lista(lista):
     if lista is None:
@@ -207,10 +216,8 @@ def buscar_indicador(palabra_clave, catalogo):
     clave = normalizar_texto(palabra_clave)
     if clave in catalogo:
         return catalogo[clave]
-    # prefer synonym keys (short) over long official names
     for k in sorted(catalogo.keys(), key=len):
         if k == clave or (len(clave) > 3 and (clave in k or k in clave)):
-            # prefer exact synonym match
             if clave in SINONIMOS_INDICADORES or normalizar_texto(clave) in {normalizar_texto(x) for x in SINONIMOS_INDICADORES}:
                 if k == clave or clave in SINONIMOS_INDICADORES:
                     return catalogo.get(clave) or catalogo[k]
@@ -231,7 +238,6 @@ def obtener_indicadores_por_tema(tema, catalogo):
             seen.add(ind)
     return out
 
-# ===== PARCHE 1: cartera de tarjetas en peso_claves =====
 def extraer_claves_indicador(pregunta):
     q = normalizar_texto(pregunta)
     peso = {
@@ -259,14 +265,11 @@ def extraer_claves_indicador(pregunta):
             continue
         if c == "mora" and any(x.startswith("morosidad") for x in claves):
             continue
-        # Si pide ROE explícito y no ROA, no arrastrar ROA por "rentabilidad"
         if c in ("roa", "rentabilidad sobre activos") and ("roe" in q or "patrimonio" in q) and "roa" not in q and "activos" not in q:
             continue
         if c in ("roe", "rentabilidad sobre patrimonio", "rentabilidad sobre el patrimonio") and "roa" in q and "roe" not in q and "patrimonio" not in q:
-            # solo ROA pedido
             pass
         claves.append(c)
-    # Si dice ROE y no ROA, eliminar claves ROA residuales
     if ("roe" in q or "patrimonio" in q) and "roa" not in q and "activos" not in q:
         claves = [c for c in claves if c not in ("roa", "rentabilidad sobre activos")]
     if "roa" in q and "roe" not in q and "patrimonio" not in q:
@@ -339,9 +342,7 @@ def detectar_tipo_consulta(query):
         return "serie"
     return "promedio"
 
-
 def es_analisis_riesgo_crediticio(query):
-    """Análisis de riesgo que debe devolver panel por banco, no solo Sistema."""
     q = normalizar_texto(query)
     habla_riesgo = any(p in q for p in (
         "riesgo crediticio", "riesgo de credito", "morosidad", "cobertura de mora",
@@ -352,7 +353,6 @@ def es_analisis_riesgo_crediticio(query):
         "identifica", "perfil", "detallado", "profundo", "compar", "evalua",
         "evaluación", "evaluacion", "implicaciones", "recomenda",
     ))
-    # informe ejecutivo solo de sistema: no forzar panel bancario
     if "informe ejecutivo" in q and not any(p in q for p in ("banco", "bancos", "preocupante", "mayor riesgo")):
         return False
     return habla_riesgo and pide_detalle_bancos
@@ -362,10 +362,7 @@ def detectar_orden_ranking(query):
     return any(w in q for w in ("menor", "peor", "mas bajo", "seguro", "menos riesgoso"))
 
 def es_consulta_rentabilidad_riesgo(query):
-    """Solo ratio ROE/mora cuando la pregunta se centra en eso.
-    Si también pide ROA/capital/varios indicadores explícitos, no interceptar."""
     q = normalizar_texto(query)
-    # Si pide un panel amplio (ROA, capital, etc.), dejar motor multi-indicador
     if any(p in q for p in ("roa", "adecuacion", "capital", "spread", "liquidez")):
         return False
     return any(p in q for p in (
@@ -373,9 +370,7 @@ def es_consulta_rentabilidad_riesgo(query):
         "roe y morosidad", "roe y mora", "mejor relacion",
     ))
 
-
 def es_consulta_conversacional(query):
-    """Saludos, fecha/hora u otras frases sin contenido financiero CNBS."""
     q = normalizar_texto(query or "").strip()
     if not q:
         return True
@@ -397,9 +392,7 @@ def es_consulta_conversacional(query):
     )
     return any(p in q for p in patrones)
 
-
 def respuesta_conversacional(query):
-    """Respuesta corta sin invocar Pandas ni LLM."""
     from datetime import datetime
     q = normalizar_texto(query or "")
     ahora = datetime.now()
@@ -424,18 +417,14 @@ def respuesta_conversacional(query):
         return "Puedo ayudarte con rankings, comparaciones entre bancos, evolución temporal y riesgo crediticio. Ejemplo: *¿Qué banco tiene mejor relación ROE/morosidad en 2025?*"
     return f"Esta consulta no parece referirse a indicadores CNBS. Prueba con ROA, ROE, morosidad o un banco. _Hoy es {fecha}._"
 
-
 def planificar(query, contexto, catalogo):
     q = normalizar_texto(query)
     bancos = aplanar_lista(contexto.ultimo_banco) if contexto.ultimo_banco else []
     anios = extraer_anios(query) or ([contexto.ultimo_anio] if contexto.ultimo_anio else [])
 
-    # ===== PRIORIDAD 1: indicadores explícitos en la pregunta =====
     claves = extraer_claves_indicador(query)
     if claves:
         inds = resolver_indicadores(claves, catalogo)
-        # Solo complementar con panel crédito si el foco es riesgo crediticio genérico
-        # y NO pidió ROA/ROE/capital de forma explícita
         pide_rent_solv = any(c in claves for c in (
             "roe", "roa", "rentabilidad sobre patrimonio", "rentabilidad sobre el patrimonio",
             "rentabilidad sobre activos", "adecuacion de capital", "indice de adecuacion",
@@ -450,26 +439,22 @@ def planificar(query, contexto, catalogo):
         if inds:
             return inds, None, detectar_tipo_consulta(query), bancos, anios, detectar_orden_ranking(query)
 
-    # ===== PRIORIDAD 2: inversión =====
     if any(p in q for p in ("invertir", "recomendar", "inversion")):
         inds = obtener_indicadores_por_tema("rentabilidad", catalogo)
         if inds:
             return inds, "rentabilidad", detectar_tipo_consulta(query), bancos, anios, detectar_orden_ranking(query)
 
-    # ===== PRIORIDAD 3: panel riesgo crediticio (solo si no hubo claves explícitas) =====
     if es_analisis_riesgo_crediticio(query):
         inds = obtener_indicadores_por_tema("credito", catalogo)
         if inds:
             return inds, "credito", "ranking", bancos, anios, False
 
-    # ===== PRIORIDAD 4: tema general =====
     tema = detectar_tema(query)
     if tema:
         inds = obtener_indicadores_por_tema(tema, catalogo)
         if inds:
             return inds, tema, detectar_tipo_consulta(query), bancos, anios, detectar_orden_ranking(query)
 
-    # ===== PRIORIDAD 5: contexto =====
     if contexto.ultimo_tema:
         inds = obtener_indicadores_por_tema(contexto.ultimo_tema, catalogo)
         if inds:
@@ -510,15 +495,12 @@ def promedio(df, bancos, indicadores, anio):
         return pd.DataFrame(rows)
     return d.groupby(["Banco", "Indicador"], dropna=False)["Saldo"].mean().reset_index()
 
-# ===== PARCHE 2: ranking por indicador (no mezclar métricas) =====
 def ranking(df, indicadores, anio, top=10, ascending=False):
-    # Multi-indicador: panel completo por banco (no top-N suelto por métrica)
     if indicadores and len(indicadores) > 1:
         d = _base_filtrada(df, None, indicadores, anio)
         if d.empty:
             return d
         res = d.groupby(["Banco", "Indicador"], dropna=False)["Saldo"].mean().reset_index()
-        # Ordenar bancos por morosidad (mayor riesgo primero) si existe
         mora_mask = res["Indicador"].str.contains("MOROSIDAD SOBRE CARTERA CREDITICIA TOTAL", case=False, na=False)
         if mora_mask.any():
             orden = (
@@ -549,7 +531,6 @@ def serie_temporal(df, bancos, indicadores):
         d = d[d["Indicador"].isin(indicadores)]
     return d[["FechaReporte", "Banco", "Indicador", "Saldo"]].sort_values("FechaReporte")
 
-# ===== Ratio ROE/morosidad: tabla final Ranking|Banco|ROE|Morosidad|Ratio =====
 def ranking_rentabilidad_riesgo(df, anio, top=10, bancos=None):
     base = df[(df["FechaReporte"].dt.year == anio) & (~df["Banco"].isin(Config.ENTIDADES_AGREGADAS))]
     base = base[~base["Banco"].astype(str).str.upper().isin({"SISTEMA", "BANCOS", "HONDURAS"})]
@@ -571,39 +552,23 @@ def ranking_rentabilidad_riesgo(df, anio, top=10, bancos=None):
     j["Ratio_ROE_Mora"] = j["Ratio_ROE_Mora"].round(2)
     return j
 
-
 def es_consulta_roe_solvencia(query):
-    """Ranking equilibrio ROE + adecuación de capital (por banco, no sistema)."""
     q = normalizar_texto(query)
     habla_roe = "roe" in q or "rentabilidad" in q
-    habla_cap = any(p in q for p in (
-        "adecuacion", "solvencia", "capital", "solvencia",
-    ))
-    pide_rank = any(p in q for p in (
-        "ranking", "mejores", "mejor equilibrio", "equilibrio",
-        "top", "primer lugar", "bancos con mejor",
-    ))
-    # no confundir con ROE/mora
+    habla_cap = any(p in q for p in ("adecuacion", "solvencia", "capital", "solvencia"))
+    pide_rank = any(p in q for p in ("ranking", "mejores", "mejor equilibrio", "equilibrio", "top", "primer lugar", "bancos con mejor"))
     if "morosidad" in q or "mora" in q:
         return False
     return habla_roe and habla_cap and (pide_rank or "equilibrio" in q)
 
-
 def ranking_roe_solvencia(df, anio, top=10, bancos=None):
-    """
-    Ranking de bancos por equilibrio rentabilidad (ROE) y solvencia (adecuación de capital).
-    Score = ROE * Capital / 100 (mayor = mejor equilibrio conjunto).
-    Excluye agregados CNBS (Sistema, BANCOS, HONDURAS).
-    """
     base = df[(df["FechaReporte"].dt.year == anio)].copy()
     base = base[~base["Banco"].isin(Config.ENTIDADES_AGREGADAS)]
     base = base[~base["Banco"].astype(str).str.upper().str.contains("SISTEMA")]
     if bancos:
         base = base[base["Banco"].isin(aplanar_lista(bancos))]
     roe = base[base["Indicador"].str.contains("ROE", case=False, na=False)].groupby("Banco")["Saldo"].mean()
-    cap = base[base["Indicador"].str.contains(
-        "ADECUACI", case=False, na=False
-    )].groupby("Banco")["Saldo"].mean()
+    cap = base[base["Indicador"].str.contains("ADECUACI", case=False, na=False)].groupby("Banco")["Saldo"].mean()
     j = pd.DataFrame({"ROE": roe, "Capital": cap}).dropna()
     j = j[(j["Capital"] > 0)].copy()
     if j.empty:
@@ -617,31 +582,22 @@ def ranking_roe_solvencia(df, anio, top=10, bancos=None):
     j["Capital"] = j["Capital"].round(2)
     return j
 
-
 def es_consulta_equilibrio_triple(query):
-    """ROE + morosidad + capital: equilibrio triple."""
     q = normalizar_texto(query)
     habla_roe = "roe" in q or "rentabilidad" in q
     habla_mora = "morosidad" in q or "mora" in q or "riesgo" in q
     habla_cap = any(p in q for p in ("adecuacion", "capital", "solvencia"))
-    pide_eq = any(p in q for p in (
-        "equilibrio", "equilibrado", "mejor perfil", "perfil mas",
-        "ranking", "mejores", "mejor banco",
-    ))
+    pide_eq = any(p in q for p in ("equilibrio", "equilibrado", "mejor perfil", "perfil mas", "ranking", "mejores", "mejor banco"))
     return habla_roe and habla_mora and habla_cap and pide_eq
 
-
 def ranking_equilibrio_triple(df, anio, top=10, bancos=None):
-    """Score = (ROE / Morosidad) * (Capital / 100)."""
     base = df[(df["FechaReporte"].dt.year == anio)].copy()
     base = base[~base["Banco"].isin(Config.ENTIDADES_AGREGADAS)]
     base = base[~base["Banco"].astype(str).str.upper().str.contains("SISTEMA")]
     if bancos:
         base = base[base["Banco"].isin(aplanar_lista(bancos))]
     roe = base[base["Indicador"].str.contains("ROE", case=False, na=False)].groupby("Banco")["Saldo"].mean()
-    mora = base[base["Indicador"].str.contains(
-        "MOROSIDAD SOBRE CARTERA CREDITICIA TOTAL", case=False, na=False
-    )].groupby("Banco")["Saldo"].mean()
+    mora = base[base["Indicador"].str.contains("MOROSIDAD SOBRE CARTERA CREDITICIA TOTAL", case=False, na=False)].groupby("Banco")["Saldo"].mean()
     cap = base[base["Indicador"].str.contains("ADECUACI", case=False, na=False)].groupby("Banco")["Saldo"].mean()
     j = pd.DataFrame({"ROE": roe, "Morosidad": mora, "Capital": cap}).dropna()
     j = j[j["Morosidad"] > 0].copy()
@@ -657,7 +613,6 @@ def ranking_equilibrio_triple(df, anio, top=10, bancos=None):
     j["Morosidad"] = j["Morosidad"].round(2)
     j["Capital"] = j["Capital"].round(2)
     return j
-
 
 def calcular_confianza(df_res, indicadores=None, bancos=None, anios=None):
     if df_res is None or df_res.empty:
@@ -684,9 +639,7 @@ def calcular_confianza(df_res, indicadores=None, bancos=None, anios=None):
         parts.append(f"Años: {', '.join(map(str, anios))}")
     return "Alta", "; ".join(parts)
 
-
 def usuario_pide_detalle(query):
-    """Prosa extra: explicación, por qué, análisis narrativo."""
     q = normalizar_texto(query)
     return any(p in q for p in (
         "explica", "explicalo", "explícalo", "por que", "porqué", "porque",
@@ -695,7 +648,6 @@ def usuario_pide_detalle(query):
         "informe narrativo", "extenso", "desarrolla", "redacta un ensayo",
         "menciona al menos", "factores", "implica",
     ))
-
 
 def consulta_simple_sistema(query, df_res):
     if df_res is None or df_res.empty:
@@ -708,7 +660,6 @@ def consulta_simple_sistema(query, df_res):
     if n_ind <= 3 and n_banco <= 2 and not any(p in q for p in ("equilibrado", "compara", "versus")):
         return True
     return False
-
 
 class ConsultaStrategy(ABC):
     @abstractmethod
@@ -750,7 +701,6 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
     if not anios:
         anios = [int(df["FechaReporte"].dt.year.max())]
 
-    # PARCHE 3: ruta especial rentabilidad-riesgo (ROE/Mora)
     if es_consulta_rentabilidad_riesgo(query):
         partes = []
         for anio in anios:
@@ -760,20 +710,16 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
         if partes:
             return pd.concat(partes, ignore_index=True)
 
-    # PARCHE 3c: equilibrio triple ROE + mora + capital
     if es_consulta_equilibrio_triple(query):
         partes = []
         for anio in anios:
-            sub = ranking_equilibrio_triple(
-                df, anio, top=kwargs.get("top", 10), bancos=bancos or None
-            )
+            sub = ranking_equilibrio_triple(df, anio, top=kwargs.get("top", 10), bancos=bancos or None)
             if not sub.empty:
                 partes.append(sub)
         if partes:
             return pd.concat(partes, ignore_index=True)
         return pd.DataFrame()
 
-    # PARCHE 3b: equilibrio ROE + adecuación de capital (por banco)
     if es_consulta_roe_solvencia(query):
         partes = []
         for anio in anios:
@@ -790,7 +736,6 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
     if bancos and tipo == "ranking" and "compara" in normalizar_texto(query):
         tipo = "comparar"
 
-    # Nunca usar promedio agregado ("Sistema") si la pregunta pide ranking/mejores bancos
     qn = normalizar_texto(query)
     if tipo in ("promedio", "comparar") and not bancos and any(
         p in qn for p in ("ranking", "mejores bancos", "top ", "mejor equilibrio", "5 bancos", "cinco bancos")
@@ -813,7 +758,6 @@ def necesita_llm(df_res, query, meta_info):
         return usuario_pide_detalle(query)
     if consulta_simple_sistema(query, df_res) and not usuario_pide_detalle(query):
         return False
-    # Comparaciones multi-banco / multi-año → tabla Markdown desde Pandas
     if (
         "Indicador" in df_res.columns
         and df_res["Indicador"].nunique() >= 2
@@ -827,7 +771,6 @@ def necesita_llm(df_res, query, meta_info):
     q = normalizar_texto(query)
     if any(p in q for p in ("equilibrado", "relacion", "relativa")) and not usuario_pide_detalle(query):
         return False
-    # Panel multi-banco ya formateado: no LLM salvo prosa explícita
     if (
         "Indicador" in df_res.columns
         and "Banco" in df_res.columns
@@ -836,9 +779,7 @@ def necesita_llm(df_res, query, meta_info):
         and not usuario_pide_detalle(query)
     ):
         return False
-    if any(p in q for p in (
-        "recomendar", "explica", "informe narrativo",
-    )):
+    if any(p in q for p in ("recomendar", "explica", "informe narrativo")):
         return True
     if any(p in q for p in ("analiza", "riesgo", "salud", "evolucion", "informe")) and not (
         "Indicador" in df_res.columns and df_res["Indicador"].nunique() >= 2
@@ -848,11 +789,9 @@ def necesita_llm(df_res, query, meta_info):
         return True
     return False
 
-
 def preparar_datos_para_redactor(df_res):
     if df_res is None or df_res.empty:
         return []
-    # Prioridad: equilibrio triple (incluye Ratio_ROE_Mora como col auxiliar; no usarla en LLM)
     if "Ranking" in df_res.columns and "Score_Triple" in df_res.columns:
         datos = []
         for _, row in df_res.iterrows():
@@ -910,13 +849,7 @@ def preparar_datos_para_redactor(df_res):
         datos.append(item)
     return datos
 
-
-
 def extraer_resultado(df_res):
-    """
-    Resultado determinístico de Pandas para gobernar al LLM.
-    Devuelve dict con ganador y métricas clave (o {}).
-    """
     if df_res is None or df_res.empty or "Banco" not in df_res.columns:
         return {}
 
@@ -947,14 +880,10 @@ def extraer_resultado(df_res):
     banco = row.get("Banco")
     if pd.isna(banco):
         return {}
-    # Rechazar agregados CNBS como "ganador"
     if str(banco).strip().upper() in {"SISTEMA", "BANCOS", "HONDURAS", "SISTEMA BANCARIO"}:
-        # intentar siguiente fila bancaria
         for _, alt in df_res.iterrows():
             b2 = alt.get("Banco")
-            if pd.notna(b2) and str(b2).strip().upper() not in {
-                "SISTEMA", "BANCOS", "HONDURAS", "SISTEMA BANCARIO"
-            }:
+            if pd.notna(b2) and str(b2).strip().upper() not in {"SISTEMA", "BANCOS", "HONDURAS", "SISTEMA BANCARIO"}:
                 row = alt
                 banco = b2
                 break
@@ -990,24 +919,17 @@ def extraer_resultado(df_res):
         "saldo": _num(row.get("Saldo")) if "Saldo" in row.index else None,
         "indicador": str(row["Indicador"]) if "Indicador" in row.index and pd.notna(row.get("Indicador")) else None,
     }
-    # lista de bancos del resultado (para validación anti-contradicción)
     try:
-        resultado["bancos_en_resultado"] = sorted(
-            {str(b) for b in df_res["Banco"].dropna().unique().tolist()}
-        )
+        resultado["bancos_en_resultado"] = sorted({str(b) for b in df_res["Banco"].dropna().unique().tolist()})
     except Exception:
         resultado["bancos_en_resultado"] = [resultado["ganador"]]
     return {k: v for k, v in resultado.items() if v is not None or k in ("ganador",)}
 
-
 def extraer_ganador(df_res):
-    """Compatibilidad: devuelve solo el nombre del ganador."""
     r = extraer_resultado(df_res)
     return r.get("ganador")
 
-
 def extraer_metricas_ganador(df_res, ganador):
-    """Compatibilidad con código previo."""
     r = extraer_resultado(df_res)
     if not r or (ganador and r.get("ganador") != ganador):
         if ganador:
@@ -1031,13 +953,7 @@ def extraer_metricas_ganador(df_res, ganador):
         out["Indicador"] = r["indicador"]
     return out
 
-
-
 def construir_contexto_llm(query, df_res, meta_info, contexto_texto="", resultado=None):
-    """
-    Capa de gobernanza: el LLM solo explica resultados de Pandas.
-    No recalcula, no cambia ranking ni ganador.
-    """
     datos = preparar_datos_para_redactor(df_res)
     if resultado is None:
         resultado = extraer_resultado(df_res)
@@ -1122,19 +1038,10 @@ REGLAS DE REDACCIÓN:
 7. Si META indica modo_corto, usa viñetas compactas.
 """
 
-
-
 def construir_prompt(query, df_res, meta_info, contexto_texto):
-    """Compatibilidad: delega en construir_contexto_llm."""
     return construir_contexto_llm(query, df_res, meta_info, contexto_texto)
 
-
 def validar_respuesta_llm(respuesta, resultado):
-    """
-    Valida que la respuesta respete el resultado determinístico.
-    - Debe mencionar al ganador (si existe).
-    - No debe atribuir victoria/liderazgo a otro banco del resultado.
-    """
     if not resultado or not resultado.get("ganador"):
         return True
     if not respuesta or str(respuesta).startswith("⚠️"):
@@ -1150,7 +1057,6 @@ def validar_respuesta_llm(respuesta, resultado):
     elif g not in r:
         return False
 
-    # Frases de victoria / liderazgo atribuidas a otro banco
     frases_victoria = (
         "presenta el perfil mas equilibrado",
         "presenta el mejor perfil",
@@ -1178,25 +1084,17 @@ def validar_respuesta_llm(respuesta, resultado):
         if not tokens_b:
             continue
         for frase in frases_victoria:
-            # ventana simple: banco cerca de frase de victoria
             for tok in tokens_b:
                 if tok in r and frase in r:
-                    # si el ganador también está en la misma respuesta con esa frase, ok
-                    # rechazar solo si el otro banco aparece junto a victoria y el ganador no está en esa zona
-                    # regla estricta: si frase de victoria y otro banco, y ganador no aparece en respuesta → fail (ya cubierto)
-                    # si ambos aparecen, exigir que no diga que el otro "es el mejor"
                     idx_f = r.find(frase)
                     idx_b = r.find(tok)
                     if idx_f >= 0 and idx_b >= 0 and abs(idx_f - idx_b) < 80:
-                        # ¿el ganador está aún más cerca?
                         idx_g = min((r.find(t) for t in tokens_g if r.find(t) >= 0), default=-1)
                         if idx_g < 0 or abs(idx_f - idx_b) < abs(idx_f - idx_g):
                             return False
     return True
 
-
 def _langsmith_config(run_name, resultado=None, extra=None):
-    """Config de traza para LangSmith (tags + metadata)."""
     meta = {
         "app": "Agente-CNBS",
         "version": "6.3",
@@ -1219,13 +1117,7 @@ def _langsmith_config(run_name, resultado=None, extra=None):
         "metadata": meta,
     }
 
-
 def redactar_respuesta(llm, prompt, resultado=None, ganador=None):
-    """
-    Invoca LLM, valida contra resultado determinístico; 1 reintento.
-    Trazas LangSmith con run_name/tags/metadata si tracing está activo.
-    Devuelve (texto, meta_gobernanza).
-    """
     if resultado is None and ganador:
         resultado = {"ganador": ganador, "bancos_en_resultado": [ganador]}
     meta_g = {
@@ -1284,10 +1176,7 @@ def redactar_respuesta(llm, prompt, resultado=None, ganador=None):
         meta_g["validacion"] = False
         return f"**Ganador determinado por Pandas: {g}**\n\n" + texto, meta_g
 
-
-
 def formatear_tabla_ranking(df_res):
-    """Tarjeta ganadora + ranking con medallas (markdown para historial)."""
     if df_res is None or df_res.empty:
         return "No se encontraron datos."
     top = df_res.iloc[0]
@@ -1320,9 +1209,7 @@ def formatear_tabla_ranking(df_res):
         )
     return "\n".join(lineas)
 
-
 def render_respuesta_ui(output, df_res, meta_html):
-    """UI enriquecida: métricas + dataframe cuando hay ranking (tipo detectado por columnas)."""
     tipo = columnas_ranking(df_res)
     if tipo == "triple":
         top = df_res.iloc[0]
@@ -1401,9 +1288,7 @@ def render_respuesta_ui(output, df_res, meta_html):
         st.markdown(output)
     st.markdown(meta_html, unsafe_allow_html=True)
 
-
 def formatear_sistema_corto(df_res, anios=None):
-    """Plantilla ejecutiva para pocas métricas de sistema."""
     titulo = "Sistema bancario"
     if anios:
         titulo += f" {', '.join(map(str, anios))}"
@@ -1411,7 +1296,6 @@ def formatear_sistema_corto(df_res, anios=None):
     if "Indicador" in df_res.columns:
         for _, row in df_res.iterrows():
             ind = str(row.get("Indicador", ""))
-            # nombre corto
             if "MOROSIDAD" in ind.upper() and "TOTAL" in ind.upper():
                 label = "Morosidad"
             elif "COBERTURA" in ind.upper() and "MORA" in ind.upper():
@@ -1429,7 +1313,6 @@ def formatear_sistema_corto(df_res, anios=None):
         lineas.append("")
         lineas.append(f"_Indicadores analizados: {df_res['Indicador'].nunique()}_")
     return "\n".join(lineas)
-
 
 def etiqueta_corta_indicador(nombre):
     u = str(nombre).upper()
@@ -1457,7 +1340,6 @@ def etiqueta_corta_indicador(nombre):
         return "Liquidez"
     return str(nombre)[:18]
 
-
 def pivot_resultados(df_res):
     if df_res is None or df_res.empty or "Indicador" not in df_res.columns:
         return None
@@ -1468,9 +1350,7 @@ def pivot_resultados(df_res):
     piv = d.pivot_table(index="Banco", columns="Ind", values="Saldo", aggfunc="mean")
     return piv.round(2)
 
-
 def df_a_markdown(df_show):
-    """Tabla markdown sin paquete tabulate."""
     headers = list(df_show.columns)
 
     def _cell(v):
@@ -1487,7 +1367,6 @@ def df_a_markdown(df_show):
     for _, row in df_show.iterrows():
         lines.append("| " + " | ".join(_cell(row[h]) for h in headers) + " |")
     return "\n".join(lines)
-
 
 def formatear_tabla_comparacion(df_res, query=None):
     piv = pivot_resultados(df_res)
@@ -1537,9 +1416,7 @@ def formatear_tabla_comparacion(df_res, query=None):
             texto += line
     return texto
 
-
 def formatear_tabla_ranking_triple(df_res):
-    """Ranking equilibrio triple: fórmula y umbrales desde Config."""
     if df_res is None or df_res.empty:
         return "No se encontraron datos."
     top = df_res.iloc[0]
@@ -1580,7 +1457,6 @@ def formatear_tabla_ranking_triple(df_res):
     lineas.append(conclusion_ranking(df_res, "triple"))
     return "\n".join(lineas)
 
-
 def responder_directamente(df_res, query, meta_info):
     if df_res is None or df_res.empty:
         return "No se encontraron datos."
@@ -1612,37 +1488,15 @@ def responder_directamente(df_res, query, meta_info):
 
     return df_a_markdown(df_res) if hasattr(df_res, "iterrows") else str(df_res)
 
-
-@st.cache_data
-def cargar_datos():
-    try:
-        df = pd.read_csv("indicadores_financieros_CNBS.csv", encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        df = pd.read_csv("indicadores_financieros_CNBS.csv", encoding="latin-1")
-    df.rename(columns={df.columns[0]: "Banco"}, inplace=True)
-    df["Banco"] = df["Banco"].astype(str).str.strip()
-    df["Indicador"] = df["Indicador"].astype(str).str.strip()
-    fechas = df["FechaReporte"].astype(str).str.strip()
-    df["FechaReporte"] = pd.to_datetime(fechas, errors="coerce")
-    m = df["FechaReporte"].isna()
-    if m.any():
-        df.loc[m, "FechaReporte"] = pd.to_datetime(fechas[m], errors="coerce", format="%m/%Y")
-    df["FechaReporte"] = df["FechaReporte"].dt.to_period("M").dt.to_timestamp()
-    df["Saldo"] = pd.to_numeric(df["Saldo"].astype(str).str.replace(r"[L\$,\s]", "", regex=True), errors="coerce")
-    return df
-
-
 # ============================================================
-# EXPORTACIONES
+# EXPORTACIONES (PDF)
 # ============================================================
 try:
     from pdf_renderer import generar_pdf_respuesta, get_pdf_renderer, PDFRenderer
 except ImportError:
-    # Fallback mínimo si no está el módulo
     def generar_pdf_respuesta(consulta, respuesta="", meta="", titulo="Informe Agente CNBS", **kwargs):
         from datetime import datetime
         text = f"{titulo}\n{datetime.now()}\n\nCONSULTA\n{consulta}\n\nRESPUESTA\n{respuesta}\n\n{meta}"
-        # PDF muy básico
         content = text.encode("latin-1", errors="replace")
         return b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n" + content
 
@@ -1657,9 +1511,7 @@ except ImportError:
     def get_pdf_renderer():
         return PDFRenderer()
 
-
 def fig_to_png_bytes(fig, titulo=None, ylabel="Valor (%)"):
-    """PNG del gráfico Plotly: kaleido → matplotlib fallback (con título y ejes)."""
     try:
         return fig.to_image(format="png", width=1100, height=520, scale=2)
     except Exception:
@@ -1669,7 +1521,6 @@ def fig_to_png_bytes(fig, titulo=None, ylabel="Valor (%)"):
         return pio.to_image(fig, format="png", width=1100, height=520)
     except Exception:
         pass
-    # Fallback matplotlib más profesional
     try:
         from io import BytesIO
         import matplotlib
@@ -1697,13 +1548,11 @@ def fig_to_png_bytes(fig, titulo=None, ylabel="Valor (%)"):
             ):
                 ax.barh(x, y, label=name, color=color)
             else:
-                # fechas
                 try:
                     xd = pd.to_datetime(x)
                 except Exception:
                     xd = x
                 ax.plot(xd, y, marker="o", label=name, linewidth=2, markersize=5, color=color)
-                # resaltar último punto
                 if len(y):
                     ax.annotate(
                         f"{float(y[-1]):.2f}%",
@@ -1724,10 +1573,7 @@ def fig_to_png_bytes(fig, titulo=None, ylabel="Valor (%)"):
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         try:
-            ax.xaxis.set_major_formatter(
-                mdates.DateFormatter("%b-%y")
-            )
-            # parche español simple vía tick labels después
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%b-%y"))
             fig_m.autofmt_xdate(rotation=0, ha="center")
             labels = []
             for t in ax.get_xticks():
@@ -1736,7 +1582,6 @@ def fig_to_png_bytes(fig, titulo=None, ylabel="Valor (%)"):
                     labels.append(f"{MESES.get(dt.month, dt.strftime('%b'))}-{str(dt.year)[2:]}")
                 except Exception:
                     labels.append("")
-            # solo aplicar si hay ticks razonables
             if len(labels) <= 16:
                 ax.set_xticklabels(labels, fontsize=8)
         except Exception:
@@ -1750,13 +1595,7 @@ def fig_to_png_bytes(fig, titulo=None, ylabel="Valor (%)"):
     except Exception:
         return None
 
-
-
 def hallazgos_desde_serie(serie, indicador_label, f_ini=None, f_fin=None):
-    """
-    Hallazgos automáticos 100% Pandas a partir de la serie temporal filtrada.
-    Sin LLM, sin hardcode de bancos.
-    """
     if serie is None or getattr(serie, "empty", True):
         return ""
     s = serie.copy()
@@ -1781,7 +1620,6 @@ def hallazgos_desde_serie(serie, indicador_label, f_ini=None, f_fin=None):
         f"El valor mínimo observado fue {vmin:.2f}%.",
     ]
 
-    # Banco con mayor / menor nivel (promedio en el rango)
     if "Banco" in s.columns and n_bancos >= 1:
         por_banco = s.groupby("Banco")["Saldo"].mean().sort_values(ascending=False)
         b_max, v_max_b = por_banco.index[0], float(por_banco.iloc[0])
@@ -1789,7 +1627,6 @@ def hallazgos_desde_serie(serie, indicador_label, f_ini=None, f_fin=None):
         lineas.append(f"Mayor nivel promedio: {b_max} ({v_max_b:.2f}%).")
         if n_bancos >= 2:
             lineas.append(f"Menor nivel promedio: {b_min} ({v_min_b:.2f}%).")
-        # Último punto disponible por banco
         if "FechaReporte" in s.columns:
             ultimo = s["FechaReporte"].max()
             ult = s[s["FechaReporte"] == ultimo].groupby("Banco")["Saldo"].mean().sort_values(ascending=False)
@@ -1806,13 +1643,10 @@ def hallazgos_desde_serie(serie, indicador_label, f_ini=None, f_fin=None):
         )
     return "\n".join(f"• {x}" for x in lineas)
 
-
 def generar_pdf_tendencia(titulo, kpis_texto, png_bytes=None, metadata=None, hallazgos=None):
-    """PDF profesional del gráfico de tendencias (mismo estilo que el informe)."""
     from io import BytesIO
     from datetime import datetime
 
-    # Preferir PDFRenderer si está disponible
     try:
         from pdf_renderer import get_pdf_renderer
         meta = metadata or {
@@ -1820,7 +1654,6 @@ def generar_pdf_tendencia(titulo, kpis_texto, png_bytes=None, metadata=None, hal
             "Fuente": "CNBS Honduras",
             "Motor": "Plotly + Pandas",
         }
-        # kpis como respuesta + summary
         summary = hallazgos or None
         respuesta = kpis_texto or ""
         if hallazgos and kpis_texto:
@@ -1887,7 +1720,6 @@ def generar_pdf_tendencia(titulo, kpis_texto, png_bytes=None, metadata=None, hal
         story.append(HRFlowable(width="100%", thickness=1.3, color=HexColor("#1D4ED8")))
         story.append(Spacer(1, 10))
 
-        # Título del gráfico en tarjeta
         story.append(
             Paragraph("<font color='#1E3A8A'><b>INDICADOR</b></font>", styles["Heading2"])
         )
@@ -1904,7 +1736,6 @@ def generar_pdf_tendencia(titulo, kpis_texto, png_bytes=None, metadata=None, hal
         story.append(box)
         story.append(Spacer(1, 10))
 
-        # KPIs
         if kpis_texto:
             story.append(
                 Paragraph("<font color='#1E3A8A'><b>INDICADORES CLAVE</b></font>", styles["Heading2"])
@@ -1939,7 +1770,6 @@ def generar_pdf_tendencia(titulo, kpis_texto, png_bytes=None, metadata=None, hal
             story.append(hall_box)
             story.append(Spacer(1, 10))
 
-        # Gráfico
         if png_bytes:
             story.append(
                 Paragraph("<font color='#1E3A8A'><b>GRÁFICO</b></font>", styles["Heading2"])
@@ -1972,7 +1802,6 @@ def generar_pdf_tendencia(titulo, kpis_texto, png_bytes=None, metadata=None, hal
         except Exception:
             return b"%PDF-1.4\n%%EOF\n"
 
-
 def df_to_excel_bytes(df_export):
     from io import BytesIO
     buf = BytesIO()
@@ -1981,10 +1810,11 @@ def df_to_excel_bytes(df_export):
             df_export.to_excel(writer, index=False, sheet_name="CNBS")
         return buf.getvalue()
     except Exception:
-        # fallback CSV bytes with xlsx extension avoided — return csv
         return df_export.to_csv(index=False).encode("utf-8-sig")
 
-
+# ============================================================
+# STREAMLIT APP
+# ============================================================
 st.set_page_config(
     page_title="Agente Financiero CNBS",
     page_icon="🏦",
@@ -1992,7 +1822,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ---- CSS ----
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -2067,7 +1896,6 @@ div[data-testid="stMetric"] {
     min-height: 52px;
     font-weight: 600;
 }
-
 .winner-card {
     border: 1px solid rgba(46,125,50,0.35);
     background: rgba(46,125,50,0.08);
@@ -2134,6 +1962,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    # ===== GROQ API KEY =====
     st.markdown("**🔐 Groq API Key**")
     if os.environ.get("GROQ_API_KEY"):
         st.success("✅ Configurada desde secrets")
@@ -2147,9 +1976,9 @@ with st.sidebar:
             placeholder="Ingresa tu API Key de Groq"
         )
 
+    # ===== LANGSMITH =====
     with st.expander("LangSmith (opcional)", expanded=False):
         st.caption("Trazas de llamadas LLM: prompt, output, latencia y tokens.")
-        
         if os.environ.get("LANGCHAIN_API_KEY"):
             st.success("✅ LangSmith API Key configurada desde secrets")
             ls_key = os.environ["LANGCHAIN_API_KEY"]
@@ -2161,7 +1990,6 @@ with st.sidebar:
                 help="https://smith.langchain.com → Settings → API Keys",
                 placeholder="Ingresa tu API Key de LangSmith"
             )
-        
         ls_project = st.text_input(
             "Proyecto",
             value=os.environ.get("LANGCHAIN_PROJECT", "Agente-CNBS"),
@@ -2189,6 +2017,8 @@ with st.sidebar:
             else:
                 st.caption("⚪ Tracing inactivo")
         st.link_button("↗ Abrir LangSmith", "https://smith.langchain.com", use_container_width=True)
+
+    # ---- Dataset y métricas ----
     st.markdown(f"""
     <div class="side-card"><div class="lbl">📊 Dataset</div><div class="val">{ultima_fecha}</div></div>
     <div class="side-card"><div class="lbl">⚡ Consultas · 🤖 LLM</div>
@@ -2228,7 +2058,6 @@ with tab1:
     else:
         llm = get_llm(groq_api_key)
 
-        # Mensaje de bienvenida (solo visual, no en historial)
         if not st.session_state.messages:
             st.markdown("""
             <div class="welcome-box">
@@ -2247,7 +2076,6 @@ with tab1:
                     st.markdown(m["content"])
                     if m.get("meta"):
                         st.markdown(f'<div class="meta-bar">{m["meta"]}</div>', unsafe_allow_html=True)
-                    # PDF programático de esta respuesta (Pandas o LLM)
                     pdf_bytes = m.get("pdf")
                     if not pdf_bytes:
                         try:
@@ -2256,9 +2084,8 @@ with tab1:
                                 m.get("content", ""),
                                 m.get("meta", ""),
                             )
-                        except Exception as ex:
+                        except Exception:
                             pdf_bytes = None
-                            st.caption(f"PDF no disponible: {ex}")
                     if pdf_bytes:
                         st.download_button(
                             "📄 Descargar informe PDF",
@@ -2271,7 +2098,7 @@ with tab1:
                 else:
                     st.markdown(m["content"])
 
-        # Botones rápidos 2x2
+        # Botones rápidos
         st.markdown("**Consultas sugeridas**")
         r1c1, r1c2 = st.columns(2)
         with r1c1:
@@ -2280,26 +2107,23 @@ with tab1:
                     "Analiza el riesgo crediticio del sistema bancario hondureño en 2025 "
                     "considerando morosidad, cobertura de mora y cartera de tarjetas de crédito"
                 )
-        with r1c2:
             if st.button("🏦  Comparar bancos", use_container_width=True, key="qb2"):
                 st.session_state.pending_query = (
                     "Compara el desempeño de AZTECA, BAC CREDOMATIC y FICOHSA en 2025 "
                     "considerando ROA, ROE, morosidad y adecuación de capital. "
                     "¿Qué banco presenta el perfil más equilibrado?"
                 )
-        r2c1, r2c2 = st.columns(2)
         with r2c1:
             if st.button("📊  Ratio ROE / Mora", use_container_width=True, key="qb3"):
                 st.session_state.pending_query = (
                     "¿Qué banco tiene mejor relación rentabilidad-riesgo en 2025? Considera ROE y morosidad."
                 )
-        with r2c2:
             if st.button("📈  Evolución 2024-2025", use_container_width=True, key="qb4"):
                 st.session_state.pending_query = (
                     "Compara la evolución del ROA y ROE del sistema bancario hondureño entre 2024 y 2025"
                 )
 
-        # Input de pregunta abierta siempre disponible
+        # Input de pregunta abierta
         chat_val = st.chat_input("Escribe tu consulta financiera...")
         query = st.session_state.pending_query or chat_val
         if st.session_state.pending_query:
@@ -2336,7 +2160,7 @@ with tab1:
                                 query=query, top=Config.TOP_RESULTS, asc=asc,
                             )
                         if fuente == "Conversacional":
-                            pass  # output y conf ya definidos
+                            pass
                         elif not validar_resultado(df_res):
                             output = f"⚠️ Sin datos. Indicadores: {indicadores}. Años: {anios}"
                             fuente = "Motor (sin datos)"
@@ -2351,7 +2175,25 @@ with tab1:
                                 "modo_corto": consulta_simple_sistema(query, df_res) and not usuario_pide_detalle(query),
                                 "confianza": conf,
                             }
-                            if necesita_llm(df_res, query, meta_info):
+
+                            # ===== AGENTES EN PARALELO (NUEVO) =====
+                            es_analisis_profundo = any(p in query.lower() for p in (
+                                "profundo", "informe ejecutivo", "perspectivas", "integral",
+                                "análisis completo", "detallado", "tres perspectivas"
+                            ))
+
+                            if es_analisis_profundo and AGENTES_PARALELOS_DISPONIBLE and df_res is not None:
+                                output = analisis_paralelo_simple(
+                                    llm,
+                                    df_res,
+                                    st.session_state.contexto.obtener_contexto()
+                                )
+                                fuente = "Pandas + 3 Agentes LLM en Paralelo"
+                                usado = True
+                                st.session_state.theme_count += 1
+                                conf, conf_motivo = "Alta", "Análisis con 3 perspectivas"
+
+                            elif necesita_llm(df_res, query, meta_info):
                                 resultado = extraer_resultado(df_res)
                                 prompt_llm = construir_contexto_llm(
                                     query, df_res, meta_info,
@@ -2405,6 +2247,7 @@ with tab1:
                         )
                         df_show = df_res if validar_resultado(df_res) else None
                         render_respuesta_ui(output, df_show, meta_html)
+
                         try:
                             meta_dict = {
                                 "Motor": motor,
@@ -2415,9 +2258,8 @@ with tab1:
                             if conf_motivo:
                                 meta_dict["Detalle"] = conf_motivo
                             df_pdf = df_res if validar_resultado(df_res) else None
-                            # ranking wide table if present
                             if df_pdf is not None and "Ratio_ROE_Mora" in df_pdf.columns:
-                                pass  # already tabular
+                                pass
                             elif df_pdf is not None and "Indicador" in df_pdf.columns:
                                 try:
                                     piv = pivot_resultados(df_pdf)
@@ -2458,13 +2300,12 @@ with tab1:
                         st.error(f"{e}\n```\n{traceback.format_exc()}\n```")
 
 # ============================================================
-# TAB 2 — TENDENCIAS (EDA interactivo)
+# TAB 2 — TENDENCIAS
 # ============================================================
 with tab2:
     st.markdown("### 📈 Tendencias de indicadores")
     st.caption("Módulo de análisis exploratorio · Evolución temporal por banco · Fuente CNBS")
 
-    # Tarjetas resumen horizontales
     st.markdown(f"""
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 16px 0;">
       <div class="side-card" style="flex:1;min-width:120px;"><div class="lbl">📄 Registros</div><div class="val">{total_registros:,}</div></div>
@@ -2582,7 +2423,6 @@ with tab2:
         st.info("No hay datos para los filtros seleccionados.")
     else:
         n_sel = len(bancos_sel) if bancos_sel else n_bancos
-        # KPIs con acentos visuales
         st.markdown(f"""
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin:4px 0 14px 0;">
           <div class="side-card" style="flex:1;min-width:110px;border-left:4px solid #1976d2;">
@@ -2603,9 +2443,6 @@ with tab2:
         </div>
         """, unsafe_allow_html=True)
 
-        f_ini = pd.Timestamp(serie["FechaReporte"].min()).strftime("%B %Y")
-        f_fin = pd.Timestamp(serie["FechaReporte"].max()).strftime("%B %Y")
-        # meses en español aproximado vía strftime locale may be English - use m/Y
         f_ini = pd.Timestamp(serie["FechaReporte"].min()).strftime("%m/%Y")
         f_fin = pd.Timestamp(serie["FechaReporte"].max()).strftime("%m/%Y")
 
@@ -2615,7 +2452,6 @@ with tab2:
             bancos_lbl += f" · +{len(bancos_sel)-4}"
         st.caption(f"{bancos_lbl} · {f_ini} — {f_fin} · {serie['FechaReporte'].nunique()} periodos")
 
-        # Misma paleta por banco en línea y barras
         bancos_plot = sorted(serie["Banco"].dropna().unique().tolist())
         palette = (
             px.colors.qualitative.Plotly
@@ -2649,7 +2485,6 @@ with tab2:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Resumen automático (Pandas)
         try:
             ult = serie["FechaReporte"].max()
             filas_u = serie[serie["FechaReporte"] == ult].groupby("Banco")["Saldo"].mean()
@@ -2662,7 +2497,6 @@ with tab2:
                 bullets.append(
                     f"Diferencia {top_b} vs {low_b}: **{top_v - low_v:.2f}** pp en el último mes."
                 )
-            # variación vs primer mes por banco
             for b in list(filas_u.index)[:3]:
                 sub = serie[serie["Banco"] == b].sort_values("FechaReporte")
                 if len(sub) >= 2:
@@ -2698,7 +2532,6 @@ with tab2:
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-        # Exportaciones del gráfico (PNG / PDF) — no el dataset
         st.markdown("---")
         st.markdown("**Exportar gráfico**")
         kpis_txt = (
@@ -2707,7 +2540,7 @@ with tab2:
             f"Promedio: {serie['Saldo'].mean():.2f}% · "
             f"Máximo: {serie['Saldo'].max():.2f}% · "
             f"Mínimo: {serie['Saldo'].min():.2f}%\n"
-                        f"Bancos: {n_sel} · Observaciones: {len(serie)}"
+            f"Bancos: {n_sel} · Observaciones: {len(serie)}"
         )
         hallazgos_txt = hallazgos_desde_serie(serie, et_sel, f_ini, f_fin)
         with st.expander("📋 Hallazgos principales (Pandas)", expanded=False):
@@ -2752,7 +2585,6 @@ with tab3:
     st.markdown("### 📋 Explorador de datos CNBS")
     st.caption("Filtros por listas desplegables · exporta solo la vista filtrada")
 
-    # Opciones desde el dataset (sin hardcode)
     bancos_opts = sorted(
         df[~df["Banco"].isin(Config.ENTIDADES_AGREGADAS)]["Banco"].dropna().unique().tolist()
     )
@@ -2768,7 +2600,6 @@ with tab3:
     ]
     if "CategoriaIndicador" in df.columns:
         cats_presentes = [c for c in CAT_ORDER_DATOS if c in set(df["CategoriaIndicador"].dropna().unique())]
-        # categorías extra no listadas
         extras = sorted(set(df["CategoriaIndicador"].dropna().unique()) - set(cats_presentes))
         cats_opts = ["Todas"] + cats_presentes + extras
     else:
@@ -2787,7 +2618,6 @@ with tab3:
             key="datos_cat",
         )
     with f2:
-        # Indicadores filtrados por categoría elegida
         if cat_sel != "Todas" and "CategoriaIndicador" in df.columns:
             inds_base = sorted(
                 df[df["CategoriaIndicador"] == cat_sel]["Indicador"].dropna().unique().tolist()
@@ -2851,7 +2681,6 @@ with tab3:
     st.caption(f"Mostrando **{len(vista_show):,}** de {total_registros:,} registros (vista filtrada)")
     st.dataframe(vista_show, use_container_width=True, height=480)
 
-    # Exportar SOLO la vista filtrada
     st.markdown("---")
     st.markdown("**Exportar vista filtrada**")
     partes = []
