@@ -151,6 +151,24 @@ Ese patr贸n es el diferenciador del proyecto frente a un chatbot que 鈥渆stima鈥
 
 ---
 
+### Ejemplo: panorama del sistema en un a帽o
+
+**Usuario**
+
+> Dame datos de 2025
+
+**Asistente**
+
+> **Comparaci贸n**
+>
+> | Banco | ROA | ROE | Mora | Capital | Spread | Liquidez |
+> |-------|-----|-----|------|---------|--------|----------|
+> | Sistema bancario | 0.55 | 5.65 | 3.56 | 15.23 | 9.54 | 37.72 |
+>
+> Motor: **Pandas** 路 Confianza: Alta 路 ~0.03 s 路 Datos CNBS 2026-02
+
+---
+
 ## Capturas de pantalla
 
 | M贸dulo | Vista |
