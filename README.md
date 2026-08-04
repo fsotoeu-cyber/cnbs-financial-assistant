@@ -162,6 +162,25 @@ Ese patrón es el diferenciador del proyecto frente a un chatbot que “estima�
 
 ---
 
+## Cómo preguntar al asistente
+
+El motor prioriza rutas según el tipo de consulta. Para obtener el resultado que esperas, conviene ser explícito:
+
+| Quieres… | Ejemplo de pregunta |
+|----------|---------------------|
+| Ranking por morosidad | `Ranking de morosidad en 2025` |
+| Mejor relación ROE / mora | `¿Qué banco tiene mejor relación rentabilidad-riesgo en 2025?` |
+| Score triple (ROE + mora + capital) | `Compara AZTECA, BAC y FICOHSA en 2025 con ROE, morosidad y capital. ¿Quién tiene el mejor equilibrio?` |
+| **Solo adecuación de capital** | `Ranking por adecuación de capital en 2025` |
+| ROA / ROE de un banco | `¿Cuál fue el ROA de Ficohsa en 2025?` |
+| Comparar bancos en un indicador | `Compara el ROA de BAC y Ficohsa en 2025` |
+| Evolución temporal | `Compara la evolución del ROA y ROE del sistema entre 2024 y 2025` |
+| Riesgo crediticio del sistema | `Analiza el riesgo crediticio del sistema en 2025 (mora, cobertura y tarjetas)` |
+
+**Importante:** si mencionas a la vez ROE, morosidad y capital (o hablas de “equilibrio”), el agente usa el **score triple**, no un ranking solo por capital. Para ordenar **únicamente** por adecuación de capital, no menciones ROE ni morosidad en la misma pregunta.
+
+---
+
 ## Arquitectura del motor
 
 ```text
