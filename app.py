@@ -2135,21 +2135,33 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown("**🔐 Groq API Key**")
-    groq_api_key = st.text_input(
-        "Groq key", type="password",
-        value=os.environ.get("GROQ_API_KEY", ""),
-        label_visibility="collapsed",
-        key="groq_key_input",
-    )
+    if os.environ.get("GROQ_API_KEY"):
+        st.success("✅ Configurada desde secrets")
+        groq_api_key = os.environ["GROQ_API_KEY"]
+    else:
+        groq_api_key = st.text_input(
+            "Groq key", type="password",
+            value="",
+            label_visibility="collapsed",
+            key="groq_key_input",
+            placeholder="Ingresa tu API Key de Groq"
+        )
 
     with st.expander("LangSmith (opcional)", expanded=False):
         st.caption("Trazas de llamadas LLM: prompt, output, latencia y tokens.")
-        ls_key = st.text_input(
-            "LangSmith API Key", type="password",
-            value=os.environ.get("LANGCHAIN_API_KEY", ""),
-            key="ls_key_input",
-            help="https://smith.langchain.com → Settings → API Keys",
-        )
+        
+        if os.environ.get("LANGCHAIN_API_KEY"):
+            st.success("✅ LangSmith API Key configurada desde secrets")
+            ls_key = os.environ["LANGCHAIN_API_KEY"]
+        else:
+            ls_key = st.text_input(
+                "LangSmith API Key", type="password",
+                value="",
+                key="ls_key_input",
+                help="https://smith.langchain.com → Settings → API Keys",
+                placeholder="Ingresa tu API Key de LangSmith"
+            )
+        
         ls_project = st.text_input(
             "Proyecto",
             value=os.environ.get("LANGCHAIN_PROJECT", "Agente-CNBS"),
@@ -2177,7 +2189,6 @@ with st.sidebar:
             else:
                 st.caption("⚪ Tracing inactivo")
         st.link_button("↗ Abrir LangSmith", "https://smith.langchain.com", use_container_width=True)
-
     st.markdown(f"""
     <div class="side-card"><div class="lbl">📊 Dataset</div><div class="val">{ultima_fecha}</div></div>
     <div class="side-card"><div class="lbl">⚡ Consultas · 🤖 LLM</div>
