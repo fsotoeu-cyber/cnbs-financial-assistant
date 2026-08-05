@@ -225,7 +225,7 @@ Si no conoces los indicadores o no sabes cómo consultar, el agente responde **s
 | Entrada | Respuesta |
 |---------|-----------|
 | `¿Qué puedo preguntar?` / `ayuda` | Guía con ejemplos por tema (rentabilidad, riesgo, capital, evolución) |
-| Solo `ROA`, `ROE`, `mora`, etc. | Definición corta + ejemplos de pregunta |
+| Solo `ROA`, `ROE`, `mora`, etc. | Devuelve el promedio del sistema para el último año, con una breve nota.|
 | Primera visita (sin historial) | Mensaje de bienvenida + botones sugeridos |
 
 En el **sidebar** hay un expander **¿Qué significan los indicadores?** (ROA, ROE, morosidad, cobertura, capital, spread, liquidez, score triple).
