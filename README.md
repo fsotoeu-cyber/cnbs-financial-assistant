@@ -23,9 +23,10 @@ Motor híbrido basado en **Pandas** y **Groq (Llama 3.3)**: Pandas realiza los c
 La aplicación está desplegada y totalmente operativa en producción:
 
 🔗 **URL pública:** [https://cnbs-financial-assistant.streamlit.app](https://cnbs-financial-assistant.streamlit.app/)
-## Resultados del proyecto
 
 ---
+
+## Resultados del proyecto
 
 | Métrica | Valor |
 |---------|--------|
