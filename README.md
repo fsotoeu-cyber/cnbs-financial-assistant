@@ -179,7 +179,7 @@ Ese patrón es el diferenciador del proyecto frente a un chatbot que “estima�
 |--------|--------|
 | Centro de Ayuda | ![Centro de Ayuda](docs/centro_ayuda.png) | 
 | Glosario | ![Glosario](docs/glosario.png) |
-| Asistente | ![Asistente](docs/asistente_respuesta.png) |
+| Asistente | ![Asistente](docs/asistente.png) |
 | Tendencias | ![Tendencias](docs/tendencias.png) |
 | Datos | ![Datos](docs/datos.png) |
 | Informe PDF | ![PDF](docs/informe_pdf.png) |
