@@ -257,7 +257,7 @@ Para garantizar la robustez del motor híbrido y auditar el comportamiento del m
 La siguiente captura muestra una ejecución real del mecanismo de **corrección automática**. Cuando el redactor intenta apartarse del resultado estricto, el validador intercepta la salida, emite una directiva de corrección obligatoria y fuerza una nueva iteración alineada con la matemática de Pandas:
 
 ![Traza de LangSmith mostrando el ciclo de reintento y corrección](docs/langsmith_trace.png)
-*Vista en LangSmith del nodo `cnbs-redactor-reintento` aplicando gobernanza estricta sobre Llama 3.3.*
+*LangSmith · nodo `cnbs-redactor-reintento`: el validador fuerza al LLM a respetar el ganador fijado por Pandas (BANHCAFE).*
 
 ---
 
