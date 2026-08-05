@@ -11,6 +11,7 @@ Motor híbrido basado en **Pandas** y **Groq (Llama 3.3)**: Pandas realiza los c
 [![Plotly](https://img.shields.io/badge/Plotly-5.18+-3F4F75?logo=plotly&logoColor=white)](https://plotly.com/)
 [![ReportLab](https://img.shields.io/badge/ReportLab-PDF-orange)](https://www.reportlab.com/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![LangSmith](https://img.shields.io/badge/LangSmith-Observability-green)
 
 <!-- Captura principal del dashboard (coloca la imagen en docs/) -->
 ![Dashboard del Agente CNBS](docs/dashboard.png)
