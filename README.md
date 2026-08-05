@@ -173,7 +173,7 @@ Ese patrón es el diferenciador del proyecto frente a un chatbot que “estima�
 
 | Módulo | Vista |
 |--------|--------|
-| Asistente | ![Asistente](docs/dashboard.png) |
+| Asistente | ![Asistente](docs/asistente_respuesta.png) |
 | Tendencias | ![Tendencias](docs/tendencias.png) |
 | Datos | ![Datos](docs/datos.png) |
 | Informe PDF | ![PDF](docs/informe_pdf.png) |
