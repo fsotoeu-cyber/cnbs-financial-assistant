@@ -20,6 +20,16 @@ Incluye **capacidades de agente** para interpretar la intención, enrutar la con
 
 ---
 
+## 🚀 Aplicación en Producción
+
+La aplicación está desplegada y operativa en **Streamlit Community Cloud**:
+
+🔗 **Aplicación pública:** [https://cnbs-financial-assistant.streamlit.app/](https://cnbs-financial-assistant.streamlit.app/)
+
+> ⚠️ **Nota:** Tras periodos de inactividad, la primera carga puede tomar unos segundos. Si la aplicación no responde de inmediato, recarga la página.
+
+---
+
 ## Resultados del proyecto
 
 | Métrica | Valor |
