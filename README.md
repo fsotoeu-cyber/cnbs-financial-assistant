@@ -2,7 +2,7 @@
 
 **Sistema analítico conversacional híbrido** para el análisis de indicadores financieros del sistema hondureño, con datos oficiales de la [Comisión Nacional de Bancos y Seguros (CNBS)](https://www.cnbs.gob.hn/).
 
-Los **cálculos son determinísticos mediante Pandas**. El LLM (Groq · Llama 3.3) solo genera explicaciones en lenguaje natural, **sujetas a validación** (no inventa cifras ni rankings).
+Los **cálculos son determinísticos mediante Pandas**. El LLM (Groq · Llama 3.3) solo genera explicaciones en lenguaje natural, **sujetas a validación** (no debe inventar cifras ni rankings).
 
 Incluye **capacidades de agente** para interpretar la intención, enrutar la consulta y ejecutar operaciones sobre el dataset; **no** es un agente autónomo que planifique o calcule por sí mismo.
 
