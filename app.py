@@ -3117,7 +3117,7 @@ with st.sidebar:
     st.markdown("""
     <div class="side-card">
       <div class="lbl">🧠 Motor</div>
-      <div class="val">Pandas · Groq · Llama 3.3</div>
+      <div class="val">Pandas · Groq · gpt-oss-120b</div>
       <div class="val" style="font-size:13px;font-weight:500;margin-top:6px;">🟢 Operativo</div>
     </div>
     """, unsafe_allow_html=True)
