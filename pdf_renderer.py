@@ -821,11 +821,11 @@ class PDFRenderer:
                 "La visualización fue generada automáticamente con Plotly, sin modelos de lenguaje."
             )
         elif "llm" in mlow or "groq" in mlow or "llama" in mlow:
-            motor_label = "Pandas + Groq (Llama 3.3)"
+            motor_label = "Pandas + Groq (gpt-oss-120b)"
             texto = (
                 "Los cálculos (rankings, ratios, promedios y comparaciones) fueron realizados "
                 "de forma determinística mediante Pandas sobre el dataset oficial de la CNBS. "
-                "Groq (Llama 3.3) se utilizó únicamente para redactar la interpretación, "
+                "Groq (gpt-oss-120b) se utilizó únicamente para redactar la interpretación, "
                 "sin modificar cifras, rankings ni resultados."
             )
         else:
@@ -862,8 +862,8 @@ class PDFRenderer:
             mlow = str(metadata.get("Motor", "")).lower()
             if "plotly" in mlow:
                 motor_label = "Pandas + Plotly"
-            elif "llm" in mlow or "groq" in mlow:
-                motor_label = "Pandas + Groq (Llama 3.3)"
+            elif "llm" in mlow or "groq" in mlow or "gpt-oss" in mlow:
+                motor_label = "Pandas + Groq (gpt-oss-120b)"
             else:
                 motor_label = "Pandas (Determinístico)"
         if not motor_label:
