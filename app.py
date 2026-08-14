@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 import logging
 
 class Config:
-    MODEL_NAME = "llama-3.3-70b-versatile"
+    MODEL_NAME = "openai/gpt-oss-120b"
     TEMPERATURE = 0.0
     TOP_RESULTS = 14
     # Agregados CNBS (nunca rankear como si fueran un banco individual)
@@ -1627,6 +1627,7 @@ NO cambies rankings.
 NO cambies el banco ganador.
 NO inventes indicadores ni cifras.
 NO deduzcas un ganador distinto al indicado por Pandas.
+No incluyas razonamiento interno, etiquetas <think> ni metadatos; solo la respuesta final al usuario.
 Tu única tarea: resumir, explicar y redactar (máximo ~150 palabras de prosa + tabla si aplica).
 
 CONSULTA DEL USUARIO:
@@ -4071,4 +4072,4 @@ with tab3:
         )
 
 st.markdown("---")
-st.caption("Sistema Analítico Financiero CNBS v6.3 · Motor analítico híbrido · Streamlit · Pandas · Groq (Llama 3.3) · Plotly · Datos CNBS · © 2026")
+st.caption("Sistema Analítico Financiero CNBS v6.3 · Motor analítico híbrido · Streamlit · Pandas · Groq (gpt-oss-120b) · Plotly · Datos CNBS · © 2026")
