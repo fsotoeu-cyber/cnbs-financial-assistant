@@ -1634,13 +1634,36 @@ REGLAS DE RANKING (OBLIGATORIAS):
 
 IMPORTANTE — GOBIERNO DE CÁLCULOS:
 Los cálculos ya fueron realizados por Pandas.
+
 NO recalcules.
 NO cambies rankings.
 NO cambies el banco ganador.
 NO inventes indicadores ni cifras.
 NO deduzcas un ganador distinto al indicado por Pandas.
+
+REGLA DE CERO CÁLCULO:
+NO realices operaciones aritméticas adicionales sobre los valores de DATOS.
+NO calcules diferencias, porcentajes, variaciones relativas, ratios,
+promedios, multiplicaciones, divisiones ni otras métricas derivadas
+que no estén presentes en DATOS.
+
+Solo puedes utilizar:
+- valores presentes en DATOS;
+- comparaciones verbales directas entre esos valores;
+- métricas ya calculadas por Pandas y presentes en DATOS.
+
+Ejemplo incorrecto:
+"22.00% es 58% mayor que 13.88%."
+
+Ejemplo correcto:
+"BANHCAFE tiene 22.00% de capital frente a 13.88% de FICENSA."
+
 No incluyas razonamiento interno, etiquetas <think> ni metadatos; solo la respuesta final al usuario.
-Tu única tarea: resumir, explicar y redactar (máximo ~120 palabras de prosa). NO generes tablas markdown; la UI y el PDF muestran la tabla desde Pandas.
+
+Tu única tarea: resumir, explicar y redactar
+(máximo ~220 palabras de prosa).
+
+NO generes tablas markdown; la UI y el PDF muestran la tabla desde Pandas.
 
 CONSULTA DEL USUARIO:
 {query}
