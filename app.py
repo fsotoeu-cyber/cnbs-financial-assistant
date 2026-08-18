@@ -234,28 +234,29 @@ def conclusion_ranking(df_res, tipo=None):
     if "Año" in df_res.columns and pd.notna(top.get("Año")):
         anio = f" en {int(top['Año'])}"
     n = len(df_res)
+    entidad = "instituciones"
+
     if tipo == "triple":
         sc = float(top["Score_Triple"])
         nivel, _ = nivel_score(sc)
         return (
             f"**Conclusión:** **{banco}** presenta el mejor equilibrio entre rentabilidad, "
-            f"riesgo crediticio y solvencia entre los {n} bancos analizados{anio} "
+            f"riesgo crediticio y solvencia entre las {n} {entidad} analizadas{anio} "
             f"(Score = {sc:.2f}, nivel {nivel}; fórmula: {Config.FORMULA_SCORE_TRIPLE})."
         )
     if tipo == "roe_mora":
         ratio = float(top["Ratio_ROE_Mora"])
         return (
             f"**Conclusión:** **{banco}** presenta la mejor relación rentabilidad–riesgo "
-            f"entre los {n} bancos analizados{anio} (Ratio ROE/Mora = {ratio:.2f})."
+            f"entre las {n} {entidad} analizadas{anio} (Ratio ROE/Mora = {ratio:.2f})."
         )
     if tipo == "roe_capital":
         sc = float(top["Score_ROE_Capital"])
         return (
             f"**Conclusión:** **{banco}** presenta el mejor equilibrio rentabilidad–solvencia "
-            f"entre los {n} bancos analizados{anio} (Score ROE×Capital/100 = {sc:.2f})."
+            f"entre las {n} {entidad} analizadas{anio} (Score ROE×Capital/100 = {sc:.2f})."
         )
     return f"**Conclusión:** **{banco}** ocupa el primer lugar del ranking calculado por Pandas{anio}."
-
 
 def aplanar_lista(lista):
     if lista is None:
