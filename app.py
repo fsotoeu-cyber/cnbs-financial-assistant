@@ -660,8 +660,38 @@ def detectar_orden_ranking(query):
 
 def es_consulta_rentabilidad_riesgo(query):
     """Solo ratio ROE/mora cuando la pregunta se centra en eso.
-    Si también pide ROA/capital/varios indicadores explícitos, no interceptar."""
+    No intercepta rankings de morosidad pura ni paneles multi-métrica.
+    """
     q = normalizar_texto(query)
+
+    # Ranking explícito por MOROSIDAD → ranking simple, no ROE/Mora
+    if any(p in q for p in (
+        "ranking por morosidad",
+        "ranking de morosidad",
+        "ranking morosidad",
+        "por morosidad",
+        "mayor morosidad",
+        "menor morosidad",
+        "morosidad de mayor a menor",
+        "morosidad de menor a mayor",
+        "indice de morosidad",
+        "índice de morosidad",
+    )) and not any(p in q for p in (
+        "roe/mora", "roe/morosidad", "roe y mora", "relacion rentabilidad",
+        "rentabilidad-riesgo", "rentabilidad riesgo",
+    )):
+        return False
+
+    # Cobertura de mora en ranking sin pedir ratio ROE → no interceptar
+    if "cobertura" in q and "ranking" in q and "roe" not in q:
+        return False
+
+    # Comparación multi-banco / multi-año con varios indicadores → no interceptar
+    if any(p in q for p in ("compara", "comparacion", "versus", " vs ")) and any(
+        p in q for p in ("roa", "capital", "adecuacion", "liquidez", "2024", "2025")
+    ):
+        return False
+
     # Panel amplio (equilibrio triple u otros) → no esta ruta
     if any(p in q for p in ("roa", "adecuacion", "capital", "spread", "liquidez", "score triple", "score de equilibrio")):
         if "score" in q and "equilibrio" in q:
@@ -670,6 +700,7 @@ def es_consulta_rentabilidad_riesgo(query):
             p in q for p in ("roe/mora", "roe/morosidad", "roe y mora", "relacion rentabilidad")
         ):
             return False
+
     return any(p in q for p in (
         "rentabilidad-riesgo", "rentabilidad riesgo", "relacion rentabilidad",
         "roe y morosidad", "roe y mora", "roe/morosidad", "roe/mora", "roe / mora",
@@ -678,6 +709,7 @@ def es_consulta_rentabilidad_riesgo(query):
     )) or (
         "roe" in q and ("morosidad" in q or "mora" in q)
         and "capital" not in q and "adecuacion" not in q and "score" not in q
+        and "ranking por morosidad" not in q and "ranking de morosidad" not in q
     )
 
 
@@ -980,6 +1012,36 @@ def ranking(df, indicadores, anio, top=10, ascending=False):
     res["Ranking"] = res["Ranking"].astype(int)
     return res
 
+def extraer_umbrales_score(query):
+    """
+    Detecta umbrales del tipo:
+      adecuación/capital > 14
+      morosidad/mora < 2.5
+    Devuelve (cap_min, mora_max) o (None, None).
+    """
+    q = normalizar_texto(query or "")
+    cap_min, mora_max = None, None
+
+    m = re.search(
+        r"(?:adecuacion(?:\s+de\s+capital)?|capital)[^\d]{0,24}"
+        r"(?:>|mayor(?:es)?\s+a|superior(?:es)?\s+a|por\s+encima\s+de|arriba\s+de)\s*"
+        r"(\d+(?:[.,]\d+)?)",
+        q,
+    )
+    if m:
+        cap_min = float(m.group(1).replace(",", "."))
+
+    m = re.search(
+        r"(?:morosidad|mora)[^\d]{0,24}"
+        r"(?:<|menor(?:es)?\s+a|inferior(?:es)?\s+a|por\s+debajo\s+de|bajo\s+de)\s*"
+        r"(\d+(?:[.,]\d+)?)",
+        q,
+    )
+    if m:
+        mora_max = float(m.group(1).replace(",", "."))
+
+    return cap_min, mora_max
+
 def comparar_bancos(df, bancos, indicadores, anio):
     return promedio(df, aplanar_lista(bancos), indicadores, anio)
 
@@ -1063,20 +1125,31 @@ def ranking_roe_solvencia(df, anio, top=10, bancos=None):
 def es_consulta_equilibrio_triple(query):
     """
     Score triple ROE+mora+capital solo cuando esa es la pregunta principal.
-    No intercepta paneles multi-métrica (ROA, liquidez, etc.) ni comparación entre tipos.
+    No intercepta comparaciones multi-banco multi-año ni rankings de mora pura.
     """
     q = normalizar_texto(query)
-    # Petición explícita de score / ranking de equilibrio
+
+    # Comparar bancos nombrados + varios años → panel comparar, no solo score
+    if any(p in q for p in ("compara", "comparacion", "versus", " vs ")) and extraer_bancos(query):
+        if not any(p in q for p in ("score de equilibrio", "score triple", "score equilibrio")):
+            return False
+
+    # Ranking por morosidad pura
+    if any(p in q for p in (
+        "ranking por morosidad", "ranking de morosidad", "por morosidad",
+    )) and "score" not in q and "equilibrio" not in q:
+        return False
+
     explicito_score = any(p in q for p in (
         "score de equilibrio", "score equilibrio", "score triple", "score (roe",
         "ranking por score", "ranking score",
         "mejor relacion rentabilidad-riesgo", "ratio roe/mora",
     )) or ("score" in q and "equilibrio" in q)
-    # Panel amplio → multi-indicador, no solo score
+
     extras = ("roa", "liquidez", "cobertura", "tarjeta", "spread", "tasa activa", "tasa pasiva")
     if sum(1 for p in extras if p in q) >= 1 and not explicito_score:
         return False
-    # Comparación entre tipos de institución → promedios por tipo
+
     n_tipos = sum([
         any(p in q for p in ("comercial", "comerciales")),
         any(p in q for p in ("estatal", "estatales")),
@@ -1084,8 +1157,10 @@ def es_consulta_equilibrio_triple(query):
     ])
     if n_tipos >= 2 and not explicito_score:
         return False
+
     if explicito_score:
         return True
+
     habla_roe = "roe" in q or "rentabilidad" in q
     habla_mora = "morosidad" in q or "mora" in q
     habla_cap = any(p in q for p in ("adecuacion", "capital", "solvencia"))
@@ -1093,26 +1168,41 @@ def es_consulta_equilibrio_triple(query):
         "equilibrio", "equilibrado", "mejor perfil", "perfil mas equilibrado",
         "score",
     ))
-    # "ranking" solo no basta: evita robar "ranking de ROE" genérico
     return habla_roe and habla_mora and habla_cap and pide_eq
 
 
-def ranking_equilibrio_triple(df, anio, top=10, bancos=None):
-    """Score = (ROE / Morosidad) * (Capital / 100)."""
+def ranking_equilibrio_triple(df, anio, top=10, bancos=None, query=""):
+    """
+    Score = (ROE / Morosidad) * (Capital / 100).
+    Si la pregunta trae umbrales (capital > X, mora < Y), filtra ANTES del ranking.
+    """
     base = df[(df["FechaReporte"].dt.year == anio)].copy()
     base = base[~base["Banco"].isin(Config.ENTIDADES_AGREGADAS)]
     base = base[~base["Banco"].astype(str).str.upper().str.contains("SISTEMA")]
+    base = base[~base["Banco"].map(es_agregado)]
     if bancos:
         base = base[base["Banco"].isin(aplanar_lista(bancos))]
+
     roe = base[base["Indicador"].str.contains("ROE", case=False, na=False)].groupby("Banco")["Saldo"].mean()
     mora = base[base["Indicador"].str.contains(
         "MOROSIDAD SOBRE CARTERA CREDITICIA TOTAL", case=False, na=False
     )].groupby("Banco")["Saldo"].mean()
     cap = base[base["Indicador"].str.contains("ADECUACI", case=False, na=False)].groupby("Banco")["Saldo"].mean()
+
     j = pd.DataFrame({"ROE": roe, "Morosidad": mora, "Capital": cap}).dropna()
     j = j[j["Morosidad"] > 0].copy()
     if j.empty:
         return j
+
+    # Umbrales desde la pregunta (ej. capital > 14 y mora < 2.5)
+    cap_min, mora_max = extraer_umbrales_score(query)
+    if cap_min is not None:
+        j = j[j["Capital"] > cap_min]
+    if mora_max is not None:
+        j = j[j["Morosidad"] < mora_max]
+    if j.empty:
+        return j
+
     j["Ratio_ROE_Mora"] = (j["ROE"] / j["Morosidad"]).round(2)
     j["Score_Triple"] = ((j["ROE"] / j["Morosidad"]) * (j["Capital"] / 100.0)).round(2)
     j = j.sort_values("Score_Triple", ascending=False).head(top).reset_index()
@@ -1123,7 +1213,6 @@ def ranking_equilibrio_triple(df, anio, top=10, bancos=None):
     j["Morosidad"] = j["Morosidad"].round(2)
     j["Capital"] = j["Capital"].round(2)
     return j
-
 
 def calcular_confianza(df_res, indicadores=None, bancos=None, anios=None):
     if df_res is None or df_res.empty:
@@ -1249,22 +1338,35 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
         if partes:
             return pd.concat(partes, ignore_index=True)
 
+    qn = normalizar_texto(query)
+    # Comparar bancos nombrados: no secuestrar con plantillas ROE/Mora o score
+    es_compara_nombrados = (
+        any(p in qn for p in ("compara", "comparacion", "versus", " vs "))
+        and bool(bancos)
+    )
+
     # PARCHE 3: ruta especial rentabilidad-riesgo (ROE/Mora)
-    if es_consulta_rentabilidad_riesgo(query):
+    if (not es_compara_nombrados) and es_consulta_rentabilidad_riesgo(query):
         partes = []
         for anio in anios:
-            sub = ranking_rentabilidad_riesgo(df, anio, top=kwargs.get("top", 10), bancos=bancos or None)
+            sub = ranking_rentabilidad_riesgo(
+                df, anio, top=kwargs.get("top", 10), bancos=bancos or None
+            )
             if not sub.empty:
                 partes.append(sub)
         if partes:
             return pd.concat(partes, ignore_index=True)
 
-    # PARCHE 3c: equilibrio triple ROE + mora + capital (por entidad, no por tipo)
-    if es_consulta_equilibrio_triple(query) and uni not in ("todos",):
+    # PARCHE 3c: equilibrio triple (con umbrales si la pregunta los trae)
+    if (not es_compara_nombrados) and es_consulta_equilibrio_triple(query) and uni not in ("todos",):
         partes = []
         for anio in anios:
             sub = ranking_equilibrio_triple(
-                df, anio, top=kwargs.get("top", 10), bancos=bancos or None
+                df,
+                anio,
+                top=kwargs.get("top", 10),
+                bancos=bancos or None,
+                query=query,  # capital > X, mora < Y
             )
             if not sub.empty:
                 partes.append(sub)
@@ -1272,11 +1374,13 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
             return pd.concat(partes, ignore_index=True)
         return pd.DataFrame()
 
-    # PARCHE 3b: equilibrio ROE + adecuación de capital (por banco)
-    if es_consulta_roe_solvencia(query):
+    # PARCHE 3b: equilibrio ROE + adecuación de capital
+    if (not es_compara_nombrados) and es_consulta_roe_solvencia(query):
         partes = []
         for anio in anios:
-            sub = ranking_roe_solvencia(df, anio, top=kwargs.get("top", 10), bancos=bancos or None)
+            sub = ranking_roe_solvencia(
+                df, anio, top=kwargs.get("top", 10), bancos=bancos or None
+            )
             if not sub.empty:
                 partes.append(sub)
         if partes:
@@ -1290,7 +1394,6 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
         tipo = "comparar"
 
     # Nunca usar promedio agregado ("Sistema") si la pregunta pide ranking/mejores bancos
-    qn = normalizar_texto(query)
     if tipo in ("promedio", "comparar") and not bancos and any(
         p in qn for p in ("ranking", "mejores bancos", "top ", "mejor equilibrio", "5 bancos", "cinco bancos")
     ):
@@ -1562,7 +1665,6 @@ def extraer_metricas_ganador(df_res, ganador):
     if "indicador" in r:
         out["Indicador"] = r["indicador"]
     return out
-
 
 
 def construir_contexto_llm(query, df_res, meta_info, contexto_texto="", resultado=None):
