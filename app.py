@@ -214,12 +214,19 @@ def columnas_ranking(df_res):
     if df_res is None or df_res.empty:
         return None
     cols = set(df_res.columns)
-    if "Score_Triple" in cols:
+    # Panel multi-año (ROE_2024, Delta_Ratio...) no es ranking triple clásico
+    if "Delta_Ratio" in cols:
+        return "delta_roe_mora"
+    if "Score_Triple" in cols and "ROE" in cols and "Morosidad" in cols and "Ranking" in cols:
+        return "triple"
+    if "Score_Triple" in cols and "ROE" in cols and "Morosidad" in cols:
         return "triple"
     if "Ratio_ROE_Mora" in cols and "Ranking" in cols:
         return "roe_mora"
     if "Score_ROE_Capital" in cols and "Ranking" in cols:
         return "roe_capital"
+    if "Morosidad" in cols and "Ranking" in cols and "Score_Triple" not in cols:
+        return "morosidad"
     return None
 
 
@@ -1193,7 +1200,28 @@ def ranking_equilibrio_triple(df, anio, top=10, bancos=None, query=""):
     j = pd.DataFrame({"ROE": roe, "Morosidad": mora, "Capital": cap}).dropna()
     j = j[j["Morosidad"] > 0].copy()
     if j.empty:
-        return j
+        return pd.DataFrame()
+
+    # Umbrales desde la pregunta (ej. capital > 14 y mora < 2.5)
+    cap_min, mora_max = extraer_umbrales_score(query)
+    if cap_min is not None:
+        j = j[j["Capital"] > cap_min]
+    if mora_max is not None:
+        j = j[j["Morosidad"] < mora_max]
+    if j.empty:
+        return pd.DataFrame()
+
+    j["Ratio_ROE_Mora"] = (j["ROE"] / j["Morosidad"]).round(2)
+    j["Score_Triple"] = ((j["ROE"] / j["Morosidad"]) * (j["Capital"] / 100.0)).round(2)
+    j = j.sort_values("Score_Triple", ascending=False).head(top).reset_index()
+    j.insert(0, "Ranking", range(1, len(j) + 1))
+    j["Ranking"] = j["Ranking"].astype(int)
+    j["Año"] = int(anio)
+    j["ROE"] = j["ROE"].round(2)
+    j["Morosidad"] = j["Morosidad"].round(2)
+    j["Capital"] = j["Capital"].round(2)
+    return j
+
 
 def es_ranking_morosidad_puro(query):
     """Ranking centrado en morosidad, no ratio ROE/Mora ni score triple."""
@@ -1236,7 +1264,7 @@ def ranking_morosidad_con_cruces(df, anio, top=20, bancos=None, ascending=False)
     j = pd.DataFrame({"Morosidad": mora, "Cobertura": cob, "ROE": roe})
     j = j.dropna(subset=["Morosidad"])
     if j.empty:
-        return j
+        return pd.DataFrame()
 
     j = j.sort_values("Morosidad", ascending=ascending).head(top).reset_index()
     j.insert(0, "Ranking", range(1, len(j) + 1))
@@ -1249,6 +1277,7 @@ def ranking_morosidad_con_cruces(df, anio, top=20, bancos=None, ascending=False)
         lambda x: "Sí" if pd.notna(x) and x < 100 else ("No" if pd.notna(x) else "N/D")
     )
     return j
+
 
 def es_consulta_delta_roe_mora(query):
     q = normalizar_texto(query or "")
@@ -1312,26 +1341,8 @@ def panel_delta_roe_mora(df, bancos, anios):
             row["Score_Triple"] = None
         rows.append(row)
     return pd.DataFrame(rows)
-    
-    # Umbrales desde la pregunta (ej. capital > 14 y mora < 2.5)
-    cap_min, mora_max = extraer_umbrales_score(query)
-    if cap_min is not None:
-        j = j[j["Capital"] > cap_min]
-    if mora_max is not None:
-        j = j[j["Morosidad"] < mora_max]
-    if j.empty:
-        return j
 
-    j["Ratio_ROE_Mora"] = (j["ROE"] / j["Morosidad"]).round(2)
-    j["Score_Triple"] = ((j["ROE"] / j["Morosidad"]) * (j["Capital"] / 100.0)).round(2)
-    j = j.sort_values("Score_Triple", ascending=False).head(top).reset_index()
-    j.insert(0, "Ranking", range(1, len(j) + 1))
-    j["Ranking"] = j["Ranking"].astype(int)
-    j["Año"] = int(anio)
-    j["ROE"] = j["ROE"].round(2)
-    j["Morosidad"] = j["Morosidad"].round(2)
-    j["Capital"] = j["Capital"].round(2)
-    return j
+
 
 def calcular_confianza(df_res, indicadores=None, bancos=None, anios=None):
     if df_res is None or df_res.empty:
@@ -2176,7 +2187,27 @@ def formatear_tabla_ranking(df_res):
 
 def render_respuesta_ui(output, df_res, meta_html):
     """UI enriquecida: métricas + dataframe cuando hay ranking (tipo detectado por columnas)."""
+    if df_res is None or df_res.empty:
+        st.markdown(output or "Sin datos.")
+        if meta_html:
+            st.markdown(meta_html, unsafe_allow_html=True)
+        return
     tipo = columnas_ranking(df_res)
+    if tipo == "delta_roe_mora":
+        st.markdown(output or "")
+        st.markdown("#### 📊 Evolución ROE / morosidad")
+        st.dataframe(df_res, use_container_width=True, hide_index=True)
+        if meta_html:
+            st.markdown(meta_html, unsafe_allow_html=True)
+        return
+    if tipo == "morosidad":
+        st.markdown(output or "")
+        cols_ok = [c for c in ["Ranking", "Banco", "Morosidad", "Cobertura", "ROE", "Cobertura_bajo_100"] if c in df_res.columns]
+        if cols_ok:
+            st.dataframe(df_res[cols_ok], use_container_width=True, hide_index=True)
+        if meta_html:
+            st.markdown(meta_html, unsafe_allow_html=True)
+        return
     if tipo == "triple":
         top = df_res.iloc[0]
         anio = int(top["Año"]) if "Año" in df_res.columns and pd.notna(top.get("Año")) else ""
@@ -2193,19 +2224,25 @@ def render_respuesta_ui(output, df_res, meta_html):
         )
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Score triple", f"{sc:.2f}")
-        c2.metric("ROE", f"{float(top['ROE']):.2f}%")
-        c3.metric("Morosidad", f"{float(top['Morosidad']):.2f}%")
-        c4.metric("Capital", f"{float(top['Capital']):.2f}%")
+        if "ROE" in df_res.columns and pd.notna(top.get("ROE")):
+            c2.metric("ROE", f"{float(top['ROE']):.2f}%")
+        if "Morosidad" in df_res.columns and pd.notna(top.get("Morosidad")):
+            c3.metric("Morosidad", f"{float(top['Morosidad']):.2f}%")
+        if "Capital" in df_res.columns and pd.notna(top.get("Capital")):
+            c4.metric("Capital", f"{float(top['Capital']):.2f}%")
         st.markdown("---")
         st.markdown("#### 📊 Ranking completo")
-        show = df_res[["Ranking", "Banco", "ROE", "Morosidad", "Capital", "Score_Triple"]].copy()
-        show["Nivel"] = show["Score_Triple"].map(lambda v: f"{nivel_score(v)[1]} {nivel_score(v)[0]}")
+        cols_show = [c for c in ["Ranking", "Banco", "ROE", "Morosidad", "Capital", "Score_Triple"] if c in df_res.columns]
+        show = df_res[cols_show].copy()
+        if "Score_Triple" in show.columns:
+            show["Nivel"] = show["Score_Triple"].map(lambda v: f"{nivel_score(v)[1]} {nivel_score(v)[0]}")
         show = show.rename(columns={
             "Ranking": "#", "Morosidad": "Mora %", "ROE": "ROE %",
             "Capital": "Capital %", "Score_Triple": "Score",
         })
-        medallas = {1: "🥇", 2: "🥈", 3: "🥉"}
-        show.insert(0, "", show["#"].map(lambda x: medallas.get(int(x), "")))
+        if "#" in show.columns:
+            medallas = {1: "🥇", 2: "🥈", 3: "🥉"}
+            show.insert(0, "", show["#"].map(lambda x: medallas.get(int(x), "")))
         st.dataframe(
             show, use_container_width=True, hide_index=True,
             height=min(420, 38 * len(show) + 40),
@@ -4516,3 +4553,4 @@ with tab3:
 
 st.markdown("---")
 st.caption("Sistema Analítico Financiero CNBS v6.3 · Motor analítico híbrido · Streamlit · Pandas · Groq (gpt-oss-120b) · Plotly · Datos CNBS · © 2026")
+
