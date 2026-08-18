@@ -1195,6 +1195,124 @@ def ranking_equilibrio_triple(df, anio, top=10, bancos=None, query=""):
     if j.empty:
         return j
 
+def es_ranking_morosidad_puro(query):
+    """Ranking centrado en morosidad, no ratio ROE/Mora ni score triple."""
+    q = normalizar_texto(query or "")
+    if not any(p in q for p in ("morosidad", "mora")):
+        return False
+    if any(p in q for p in (
+        "roe/mora", "roe/morosidad", "relacion rentabilidad",
+        "rentabilidad-riesgo", "score de equilibrio", "score triple",
+    )):
+        return False
+    return any(p in q for p in (
+        "ranking por morosidad", "ranking de morosidad", "ranking morosidad",
+        "por morosidad", "mayor morosidad", "menor morosidad",
+        "morosidad de mayor a menor", "morosidad de menor a mayor",
+        "indice de morosidad", "índice de morosidad",
+    )) or (
+        "ranking" in q and ("morosidad" in q or "mora" in q)
+        and "roe" not in q and "roa" not in q
+    )
+
+
+def ranking_morosidad_con_cruces(df, anio, top=20, bancos=None, ascending=False):
+    """Ranking por mora + Cobertura + ROE (cruces opcionales)."""
+    base = df[(df["FechaReporte"].dt.year == anio)].copy()
+    base = base[~base["Banco"].map(es_agregado)]
+    if bancos:
+        base = base[base["Banco"].isin(aplanar_lista(bancos))]
+
+    mora = base[base["Indicador"].str.contains(
+        "MOROSIDAD SOBRE CARTERA CREDITICIA TOTAL", case=False, na=False
+    )].groupby("Banco")["Saldo"].mean()
+    cob = base[base["Indicador"].str.contains(
+        "COBERTURA DE LA MORA", case=False, na=False
+    )].groupby("Banco")["Saldo"].mean()
+    roe = base[base["Indicador"].str.contains(
+        "ROE", case=False, na=False
+    )].groupby("Banco")["Saldo"].mean()
+
+    j = pd.DataFrame({"Morosidad": mora, "Cobertura": cob, "ROE": roe})
+    j = j.dropna(subset=["Morosidad"])
+    if j.empty:
+        return j
+
+    j = j.sort_values("Morosidad", ascending=ascending).head(top).reset_index()
+    j.insert(0, "Ranking", range(1, len(j) + 1))
+    j["Ranking"] = j["Ranking"].astype(int)
+    j["Año"] = int(anio)
+    j["Morosidad"] = j["Morosidad"].round(2)
+    j["Cobertura"] = j["Cobertura"].round(2)
+    j["ROE"] = j["ROE"].round(2)
+    j["Cobertura_bajo_100"] = j["Cobertura"].apply(
+        lambda x: "Sí" if pd.notna(x) and x < 100 else ("No" if pd.notna(x) else "N/D")
+    )
+    return j
+
+def es_consulta_delta_roe_mora(query):
+    q = normalizar_texto(query or "")
+    anios = extraer_anios(query)
+    if len(anios) < 2:
+        return False
+    habla_ratio = any(p in q for p in (
+        "roe/morosidad", "roe/mora", "relacion roe", "relacion rentabilidad",
+        "mejoro", "mejoró", "mejora",
+    ))
+    habla_eq = any(p in q for p in ("equilibrado", "equilibrio", "perfil"))
+    return (habla_ratio or habla_eq) and any(p in q for p in ("roe", "morosidad", "mora"))
+
+
+def panel_delta_roe_mora(df, bancos, anios):
+    """ROE/Mora por año, Delta_Ratio y Score_Triple del último año."""
+    bancos = aplanar_lista(bancos)
+    anios = sorted(anios)
+    base = df[~df["Banco"].map(es_agregado)].copy()
+    if bancos:
+        base = base[base["Banco"].isin(bancos)]
+
+    rows = []
+    for b in (bancos or list(base["Banco"].unique())):
+        row = {"Banco": b}
+        ratios = {}
+        for a in anios:
+            sub = base[(base["Banco"] == b) & (base["FechaReporte"].dt.year == a)]
+            roe = sub[sub["Indicador"].str.contains("ROE", case=False, na=False)]["Saldo"].mean()
+            mora = sub[sub["Indicador"].str.contains(
+                "MOROSIDAD SOBRE CARTERA CREDITICIA TOTAL", case=False, na=False
+            )]["Saldo"].mean()
+            cap = sub[sub["Indicador"].str.contains("ADECUACI", case=False, na=False)]["Saldo"].mean()
+            roa = sub[
+                sub["Indicador"].str.contains("ROA", case=False, na=False)
+                & ~sub["Indicador"].str.contains("ROE", case=False, na=False)
+            ]["Saldo"].mean()
+            row[f"ROE_{a}"] = round(float(roe), 2) if pd.notna(roe) else None
+            row[f"Mora_{a}"] = round(float(mora), 2) if pd.notna(mora) else None
+            row[f"ROA_{a}"] = round(float(roa), 2) if pd.notna(roa) else None
+            row[f"Capital_{a}"] = round(float(cap), 2) if pd.notna(cap) else None
+            if pd.notna(roe) and pd.notna(mora) and float(mora) > 0:
+                ratios[a] = float(roe) / float(mora)
+                row[f"Ratio_{a}"] = round(ratios[a], 2)
+            else:
+                row[f"Ratio_{a}"] = None
+        if len(anios) >= 2 and anios[0] in ratios and anios[-1] in ratios:
+            row["Delta_Ratio"] = round(ratios[anios[-1]] - ratios[anios[0]], 2)
+        else:
+            row["Delta_Ratio"] = None
+        a_last = anios[-1]
+        if row.get(f"ROE_{a_last}") and row.get(f"Mora_{a_last}") and row.get(f"Capital_{a_last}"):
+            if row[f"Mora_{a_last}"] > 0:
+                row["Score_Triple"] = round(
+                    (row[f"ROE_{a_last}"] / row[f"Mora_{a_last}"]) * (row[f"Capital_{a_last}"] / 100),
+                    2,
+                )
+            else:
+                row["Score_Triple"] = None
+        else:
+            row["Score_Triple"] = None
+        rows.append(row)
+    return pd.DataFrame(rows)
+    
     # Umbrales desde la pregunta (ej. capital > 14 y mora < 2.5)
     cap_min, mora_max = extraer_umbrales_score(query)
     if cap_min is not None:
@@ -1339,14 +1457,39 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
         if partes:
             return pd.concat(partes, ignore_index=True)
 
-    qn = normalizar_texto(query)
-    # Comparar bancos nombrados: no secuestrar con plantillas ROE/Mora o score
+        qn = normalizar_texto(query)
     es_compara_nombrados = (
         any(p in qn for p in ("compara", "comparacion", "versus", " vs "))
         and bool(bancos)
     )
 
-    # PARCHE 3: ruta especial rentabilidad-riesgo (ROE/Mora)
+    # 1) Ranking por MOROSIDAD (prioridad)
+    if es_ranking_morosidad_puro(query):
+        asc = detectar_orden_ranking(query)
+        if any(p in qn for p in ("mayor a menor", "de mayor", "mas alta", "más alta", "mayor morosidad")):
+            asc = False
+        if any(p in qn for p in ("menor a mayor", "menor morosidad", "mas baja", "más baja")):
+            asc = True
+        partes = []
+        for anio in anios:
+            sub = ranking_morosidad_con_cruces(
+                df, anio,
+                top=kwargs.get("top", 20),
+                bancos=bancos or None,
+                ascending=asc,
+            )
+            if not sub.empty:
+                partes.append(sub)
+        if partes:
+            return pd.concat(partes, ignore_index=True)
+
+    # 2) Compara nombrados + Δ ROE/Mora multi-año
+    if es_compara_nombrados and es_consulta_delta_roe_mora(query) and bancos and len(anios) >= 2:
+        sub = panel_delta_roe_mora(df, bancos, anios)
+        if not sub.empty:
+            return sub
+
+    # 3) ROE/Mora
     if (not es_compara_nombrados) and es_consulta_rentabilidad_riesgo(query):
         partes = []
         for anio in anios:
@@ -1358,7 +1501,7 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
         if partes:
             return pd.concat(partes, ignore_index=True)
 
-    # PARCHE 3c: equilibrio triple (con umbrales si la pregunta los trae)
+    # 4) Score triple + umbrales
     if (not es_compara_nombrados) and es_consulta_equilibrio_triple(query) and uni not in ("todos",):
         partes = []
         for anio in anios:
@@ -1367,7 +1510,7 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
                 anio,
                 top=kwargs.get("top", 10),
                 bancos=bancos or None,
-                query=query,  # capital > X, mora < Y
+                query=query,
             )
             if not sub.empty:
                 partes.append(sub)
@@ -1375,7 +1518,7 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
             return pd.concat(partes, ignore_index=True)
         return pd.DataFrame()
 
-    # PARCHE 3b: equilibrio ROE + adecuación de capital
+    # 5) ROE + capital
     if (not es_compara_nombrados) and es_consulta_roe_solvencia(query):
         partes = []
         for anio in anios:
@@ -2605,6 +2748,42 @@ def hallazgos_automaticos_pandas(df_res, query=None):
                 h.append(f"Menor mora: **{mrow['Banco']}** ({float(mrow['Morosidad']):.2f}%)")
             return h[:6]
 
+# Ranking morosidad + cobertura + ROE
+        if "Morosidad" in df_res.columns and "Ranking" in df_res.columns and "Score_Triple" not in df_res.columns:
+            top = df_res.iloc[0]
+            h.append(f"Mayor morosidad: **{top['Banco']}** ({float(top['Morosidad']):.2f}%)")
+            if "Cobertura" in df_res.columns:
+                bajos = df_res[df_res["Cobertura"].notna() & (df_res["Cobertura"] < 100)]
+                if bajos.empty:
+                    h.append("Ninguna con cobertura de mora **< 100%**.")
+                else:
+                    det = ", ".join(f"**{r['Banco']}** ({r['Cobertura']:.1f}%)" for _, r in bajos.iterrows())
+                    h.append(f"Cobertura **< 100%**: {det}")
+            if "ROE" in df_res.columns and df_res["ROE"].notna().any():
+                peor = df_res.dropna(subset=["ROE"]).sort_values(
+                    ["Morosidad", "ROE"], ascending=[False, True]
+                ).iloc[0]
+                h.append(
+                    f"Mayor mora + peor ROE: **{peor['Banco']}** "
+                    f"(Mora {peor['Morosidad']:.2f}%, ROE {peor['ROE']:.2f}%)"
+                )
+            return h[:6]
+
+# Panel delta ROE/Mora multi-año
+        if "Delta_Ratio" in df_res.columns and "Banco" in df_res.columns:
+            if df_res["Delta_Ratio"].notna().any():
+                best = df_res.loc[df_res["Delta_Ratio"].idxmax()]
+                h.append(
+                    f"Mayor mejora ROE/Mora: **{best['Banco']}** (Δ ratio = {best['Delta_Ratio']:+.2f})"
+                )
+            if "Score_Triple" in df_res.columns and df_res["Score_Triple"].notna().any():
+                eq = df_res.loc[df_res["Score_Triple"].idxmax()]
+                h.append(
+                    f"Más equilibrado (último año): **{eq['Banco']}** (Score {eq['Score_Triple']:.2f})"
+                )
+            return h[:6]
+
+        
         if "Indicador" in df_res.columns and "Banco" in df_res.columns and "Saldo" in df_res.columns:
             # Dirección pedida por la consulta (mayor → descendente; menor → ascendente)
             asc = detectar_orden_ranking(query) if query else None
@@ -2683,6 +2862,34 @@ def responder_directamente(df_res, query, meta_info):
         return formatear_tabla_ranking_triple(df_res) + bloque_hallazgos(df_res, query=query)
     if "Ranking" in df_res.columns and "Ratio_ROE_Mora" in df_res.columns:
         return formatear_tabla_ranking(df_res) + bloque_hallazgos(df_res, query=query)
+
+    # Ranking morosidad con cruces
+    if (
+        "Ranking" in df_res.columns
+        and "Morosidad" in df_res.columns
+        and "Score_Triple" not in df_res.columns
+        and "Ratio_ROE_Mora" not in df_res.columns
+    ):
+        col_ent = col_entidad_display(df_res, query)
+        lineas = [
+            "**Ranking por morosidad**",
+            "",
+            f"| # | {col_ent} | Morosidad % | Cobertura % | ROE % | Cob. <100% |",
+            "|--:|:------|------------:|------------:|------:|:----------|",
+        ]
+        for _, row in df_res.sort_values("Ranking").iterrows():
+            cob = f"{float(row['Cobertura']):.2f}" if pd.notna(row.get("Cobertura")) else "N/D"
+            roe = f"{float(row['ROE']):.2f}" if pd.notna(row.get("ROE")) else "N/D"
+            flag = row.get("Cobertura_bajo_100", "N/D")
+            lineas.append(
+                f"| {int(row['Ranking'])} | {row['Banco']} | {float(row['Morosidad']):.2f} | {cob} | {roe} | {flag} |"
+            )
+        return "\n".join(lineas) + bloque_hallazgos(df_res, query=query)
+
+    # Panel delta multi-año
+    if "Delta_Ratio" in df_res.columns and "Banco" in df_res.columns:
+        lineas = ["**Evolución ROE / morosidad**", "", df_res.to_markdown(index=False)]
+        return "\n".join(lineas) + bloque_hallazgos(df_res, query=query)
 
     if consulta_simple_sistema(query, df_res):
         return formatear_sistema_corto(df_res, meta_info.get("anios")) + bloque_hallazgos(df_res, query=query)
