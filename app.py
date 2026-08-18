@@ -1457,10 +1457,10 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
         if partes:
             return pd.concat(partes, ignore_index=True)
 
-        qn = normalizar_texto(query)
-    es_compara_nombrados = (
-        any(p in qn for p in ("compara", "comparacion", "versus", " vs "))
-        and bool(bancos)
+    # qn SIEMPRE fuera del if uni == "todos"
+    qn = normalizar_texto(query or "")
+    es_compara_nombrados = bool(bancos) and any(
+        p in qn for p in ("compara", "comparacion", "versus", " vs ")
     )
 
     # 1) Ranking por MOROSIDAD (prioridad)
@@ -1537,7 +1537,7 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
     if bancos and tipo == "ranking" and "compara" in normalizar_texto(query):
         tipo = "comparar"
 
-    # Nunca usar promedio agregado ("Sistema") si la pregunta pide ranking/mejores bancos
+    # Nunca usar promedio agregado ("Sistema") si pide ranking/mejores bancos
     if tipo in ("promedio", "comparar") and not bancos and any(
         p in qn for p in ("ranking", "mejores bancos", "top ", "mejor equilibrio", "5 bancos", "cinco bancos")
     ):
