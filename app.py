@@ -1478,7 +1478,7 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
                 bancos=bancos or None,
                 ascending=asc,
             )
-            if not sub.empty:
+            if sub is not None and not getattr(sub, "empty", True):
                 partes.append(sub)
         if partes:
             return pd.concat(partes, ignore_index=True)
@@ -1486,7 +1486,7 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
     # 2) Compara nombrados + Δ ROE/Mora multi-año
     if es_compara_nombrados and es_consulta_delta_roe_mora(query) and bancos and len(anios) >= 2:
         sub = panel_delta_roe_mora(df, bancos, anios)
-        if not sub.empty:
+        if sub is not None and not getattr(sub, "empty", True):
             return sub
 
     # 3) ROE/Mora
@@ -1496,7 +1496,7 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
             sub = ranking_rentabilidad_riesgo(
                 df, anio, top=kwargs.get("top", 10), bancos=bancos or None
             )
-            if not sub.empty:
+            if sub is not None and not getattr(sub, "empty", True):
                 partes.append(sub)
         if partes:
             return pd.concat(partes, ignore_index=True)
@@ -1512,7 +1512,7 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
                 bancos=bancos or None,
                 query=query,
             )
-            if not sub.empty:
+            if sub is not None and not getattr(sub, "empty", True):
                 partes.append(sub)
         if partes:
             return pd.concat(partes, ignore_index=True)
@@ -1525,7 +1525,7 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
             sub = ranking_roe_solvencia(
                 df, anio, top=kwargs.get("top", 10), bancos=bancos or None
             )
-            if not sub.empty:
+            if sub is not None and not getattr(sub, "empty", True):
                 partes.append(sub)
         if partes:
             return pd.concat(partes, ignore_index=True)
@@ -1546,11 +1546,12 @@ def ejecutar_consulta(df, indicadores, bancos, anios, tipo, **kwargs):
     out = []
     for anio in anios:
         res = StrategyFactory.get(tipo).ejecutar(df, indicadores, bancos, anio, **kwargs)
-        if not res.empty:
+        if res is not None and not getattr(res, "empty", True):
             res = res.copy()
             res["Año"] = int(anio)
             out.append(res)
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
+
 
 
 def col_entidad_display(df_res, query=None):
@@ -2888,7 +2889,22 @@ def responder_directamente(df_res, query, meta_info):
 
     # Panel delta multi-año
     if "Delta_Ratio" in df_res.columns and "Banco" in df_res.columns:
-        lineas = ["**Evolución ROE / morosidad**", "", df_res.to_markdown(index=False)]
+        cols = list(df_res.columns)
+        header = "| " + " | ".join(str(c) for c in cols) + " |"
+        sep = "|" + "|".join(["---"] * len(cols)) + "|"
+        rows = []
+        for _, row in df_res.iterrows():
+            cells = []
+            for c in cols:
+                v = row[c]
+                if pd.isna(v):
+                    cells.append("N/D")
+                elif isinstance(v, float):
+                    cells.append(f"{v:.2f}")
+                else:
+                    cells.append(str(v))
+            rows.append("| " + " | ".join(cells) + " |")
+        lineas = ["**Evolución ROE / morosidad**", "", header, sep] + rows
         return "\n".join(lineas) + bloque_hallazgos(df_res, query=query)
 
     if consulta_simple_sistema(query, df_res):
