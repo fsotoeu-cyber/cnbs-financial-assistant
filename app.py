@@ -1633,48 +1633,59 @@ def necesita_llm(df_res, query, meta_info):
 def preparar_datos_para_redactor(df_res):
     if df_res is None or df_res.empty:
         return []
-    # Prioridad: equilibrio triple (incluye Ratio_ROE_Mora como col auxiliar; no usarla en LLM)
+    # Prioridad: Score Triple
+    # Cada institución se envía como un objeto independiente para evitar
+    # que el LLM mezcle columnas entre bancos.
     if "Ranking" in df_res.columns and "Score_Triple" in df_res.columns:
         datos = []
-        for _, row in df_res.iterrows():
+        for _, row in df_res.sort_values("Ranking").iterrows():
             item = {
-                "Ranking": int(row["Ranking"]),
-                "Banco": row.get("Banco"),
-                "ROE": float(row["ROE"]) if pd.notna(row.get("ROE")) else None,
-                "Morosidad": float(row["Morosidad"]) if pd.notna(row.get("Morosidad")) else None,
-                "Capital": float(row["Capital"]) if pd.notna(row.get("Capital")) else None,
-                "Score_Triple": float(row["Score_Triple"]) if pd.notna(row.get("Score_Triple")) else None,
+                "Ranking": int(row["Ranking"]) if pd.notna(row.get("Ranking")) else None,
+                "Banco": str(row["Banco"]) if pd.notna(row.get("Banco")) else None,
+                "ROE": round(float(row["ROE"]), 2) if pd.notna(row.get("ROE")) else None,
+                "Morosidad": round(float(row["Morosidad"]), 2) if pd.notna(row.get("Morosidad")) else None,
+                "Capital": round(float(row["Capital"]), 2) if pd.notna(row.get("Capital")) else None,
+                "Score_Triple": round(float(row["Score_Triple"]), 2)
+                if pd.notna(row.get("Score_Triple")) else None,
             }
             if "Año" in row.index and pd.notna(row.get("Año")):
                 item["Año"] = int(row["Año"])
+            if "TipoInstitucion" in row.index and pd.notna(row.get("TipoInstitucion")):
+                item["TipoInstitucion"] = str(row["TipoInstitucion"])
             datos.append(item)
         return datos
     if "Ranking" in df_res.columns and "Score_ROE_Capital" in df_res.columns:
         datos = []
-        for _, row in df_res.iterrows():
+        for _, row in df_res.sort_values("Ranking").iterrows():
             item = {
-                "Ranking": int(row["Ranking"]),
-                "Banco": row.get("Banco"),
-                "ROE": float(row["ROE"]) if pd.notna(row.get("ROE")) else None,
-                "Capital": float(row["Capital"]) if pd.notna(row.get("Capital")) else None,
-                "Score_ROE_Capital": float(row["Score_ROE_Capital"]) if pd.notna(row.get("Score_ROE_Capital")) else None,
+                "Ranking": int(row["Ranking"]) if pd.notna(row.get("Ranking")) else None,
+                "Banco": str(row["Banco"]) if pd.notna(row.get("Banco")) else None,
+                "ROE": round(float(row["ROE"]), 2) if pd.notna(row.get("ROE")) else None,
+                "Capital": round(float(row["Capital"]), 2) if pd.notna(row.get("Capital")) else None,
+                "Score_ROE_Capital": round(float(row["Score_ROE_Capital"]), 2)
+                if pd.notna(row.get("Score_ROE_Capital")) else None,
             }
             if "Año" in row.index and pd.notna(row.get("Año")):
                 item["Año"] = int(row["Año"])
+            if "TipoInstitucion" in row.index and pd.notna(row.get("TipoInstitucion")):
+                item["TipoInstitucion"] = str(row["TipoInstitucion"])
             datos.append(item)
         return datos
     if "Ranking" in df_res.columns and "Ratio_ROE_Mora" in df_res.columns:
         datos = []
-        for _, row in df_res.iterrows():
+        for _, row in df_res.sort_values("Ranking").iterrows():
             item = {
-                "Ranking": int(row["Ranking"]),
-                "Banco": row.get("Banco"),
-                "ROE": float(row["ROE"]) if pd.notna(row.get("ROE")) else None,
-                "Morosidad": float(row["Morosidad"]) if pd.notna(row.get("Morosidad")) else None,
-                "Ratio_ROE_Mora": float(row["Ratio_ROE_Mora"]) if pd.notna(row.get("Ratio_ROE_Mora")) else None,
+                "Ranking": int(row["Ranking"]) if pd.notna(row.get("Ranking")) else None,
+                "Banco": str(row["Banco"]) if pd.notna(row.get("Banco")) else None,
+                "ROE": round(float(row["ROE"]), 2) if pd.notna(row.get("ROE")) else None,
+                "Morosidad": round(float(row["Morosidad"]), 2) if pd.notna(row.get("Morosidad")) else None,
+                "Ratio_ROE_Mora": round(float(row["Ratio_ROE_Mora"]), 2)
+                if pd.notna(row.get("Ratio_ROE_Mora")) else None,
             }
             if "Año" in row.index and pd.notna(row.get("Año")):
                 item["Año"] = int(row["Año"])
+            if "TipoInstitucion" in row.index and pd.notna(row.get("TipoInstitucion")):
+                item["TipoInstitucion"] = str(row["TipoInstitucion"])
             datos.append(item)
         return datos
     # Ranking simple: columnas cortas para el redactor (sin repetir nombre largo del indicador)
@@ -1690,16 +1701,36 @@ def preparar_datos_para_redactor(df_res):
                 item["Año"] = int(row["Año"])
             datos.append(item)
         return datos
+    # Comparaciones / paneles multi-indicador: un objeto por fila (Banco + Indicador + valor)
+    # para que el LLM no mezcle columnas entre instituciones.
     datos = []
     for _, row in df_res.iterrows():
         item = {
-            "banco": row.get("Banco"),
-            "valor_pct": round(float(row["Saldo"]), 2) if "Saldo" in row.index and pd.notna(row.get("Saldo")) else None,
+            "Banco": str(row["Banco"]) if "Banco" in row.index and pd.notna(row.get("Banco")) else None,
         }
+        if "Indicador" in row.index and pd.notna(row.get("Indicador")):
+            item["Indicador"] = str(row["Indicador"])
+        if "Saldo" in row.index and pd.notna(row.get("Saldo")):
+            item["Valor_pct"] = round(float(row["Saldo"]), 2)
         if "Ranking" in row.index and pd.notna(row.get("Ranking")):
             item["Ranking"] = int(row["Ranking"])
         if "Año" in row.index and pd.notna(row.get("Año")):
-            item["anio"] = int(row["Año"])
+            item["Año"] = int(row["Año"])
+        if "TipoInstitucion" in row.index and pd.notna(row.get("TipoInstitucion")):
+            item["TipoInstitucion"] = str(row["TipoInstitucion"])
+        # Panel delta multi-año: incluir columnas presentes
+        for col in row.index:
+            if col in item or col in ("Banco", "Indicador", "Saldo"):
+                continue
+            if col.startswith(("ROE_", "Mora_", "ROA_", "Capital_", "Ratio_")) or col in (
+                "Delta_Ratio", "Score_Triple", "Morosidad", "ROE", "Capital", "Cobertura"
+            ):
+                v = row.get(col)
+                if pd.notna(v):
+                    try:
+                        item[col] = round(float(v), 2)
+                    except (TypeError, ValueError):
+                        item[col] = str(v)
         datos.append(item)
     return datos
 
@@ -1892,9 +1923,8 @@ REGLAS DE RANKING (OBLIGATORIAS):
 
     return f"""Eres un redactor financiero especializado en el sistema bancario de Honduras (CNBS).
 
-IMPORTANTE — GOBIERNO DE CÁLCULOS:
+IMPORTANTE — GOBIERNO DE CÁLCULOS E INTEGRIDAD DE DATOS:
 Los cálculos ya fueron realizados por Pandas.
-
 NO recalcules.
 NO cambies rankings.
 NO cambies el banco ganador.
@@ -1906,24 +1936,65 @@ NO realices operaciones aritméticas adicionales sobre los valores de DATOS.
 NO calcules diferencias, porcentajes, variaciones relativas, ratios,
 promedios, multiplicaciones, divisiones ni otras métricas derivadas
 que no estén presentes en DATOS.
-
 Solo puedes utilizar:
 - valores presentes en DATOS;
 - comparaciones verbales directas entre esos valores;
 - métricas ya calculadas por Pandas y presentes en DATOS.
+Ejemplo incorrecto: "22.00% es 58% mayor que 13.88%."
+Ejemplo correcto: "BANHCAFE tiene 22.00% de capital frente a 13.88% de FICENSA."
 
-Ejemplo incorrecto:
-"22.00% es 58% mayor que 13.88%."
+REGLA DE IDENTIDAD BANCO ↔ CIFRAS:
+Cada objeto en DATOS representa UNA institución (campo Banco) con SUS indicadores.
+- Conserva el Banco correspondiente a cada valor.
+- Conserva la columna correspondiente a cada indicador (ROE, Morosidad, Capital, ROA, etc.).
+- NO mezcles ROE, Morosidad, Capital o ROA entre instituciones.
+- Si citas "BANHCAFE", usa SOLO las cifras del objeto cuyo Banco es BANHCAFE.
+Ejemplo INCORRECTO: atribuir a BANHCAFE el ROE de otro banco o intercambiar mora y capital.
+Ejemplo CORRECTO: "BANHCAFE: ROE 12.50%, Morosidad 0.98%, Capital 22.00%."
 
-Ejemplo correcto:
-"BANHCAFE tiene 22.00% de capital frente a 13.88% de FICENSA."
+REGLA DE RANKINGS:
+Si DATOS contiene Ranking:
+- respeta exactamente el orden de Pandas;
+- Ranking = 1 es el primer lugar;
+- no cambies el ganador;
+- no inventes posiciones;
+- no reordenes instituciones.
+Si DATOS contiene Score_Triple:
+- el criterio del ranking es Score_Triple;
+- justifica el primer lugar con Score_Triple y sus componentes en DATOS;
+- NO sustituyas Score_Triple por Ratio_ROE_Mora.
+Si RESULTADO DETERMINÍSTICO indica un ganador, ese es el único primer lugar válido.
 
-No incluyas razonamiento interno, etiquetas <think> ni metadatos; solo la respuesta final al usuario.
+REGLA DE AGREGADOS:
+"Sistema bancario", "BANCOS", "HONDURAS", "SISTEMA",
+"BANCOS ESTATALES", "FINANCIERAS" u otros agregados estadísticos
+NO son instituciones individuales.
+Cuando el resultado sea un agregado:
+- utiliza "promedio del sistema" o "agregado estadístico";
+- NO uses "Ranking 1", "ganador" ni "segundo lugar";
+- NO presentes el agregado como un banco individual.
+Ejemplo INCORRECTO: "El Sistema bancario ocupa el Ranking 1."
+Ejemplo CORRECTO: "El promedio del sistema bancario en 2025 fue de 5.64% de ROE."
 
-Tu única tarea: resumir, explicar y redactar
-(máximo ~220 palabras de prosa).
+REGLA DE COMPARACIONES:
+Cuando compares varias instituciones:
+- lista cada banco con sus propios valores de DATOS;
+- no construyas una métrica nueva para decidir quién gana si no está en DATOS;
+- si hay Ranking o Score_Triple o ganador en RESULTADO, úsalo; no inventes otro criterio.
 
-NO generes tablas markdown; la UI y el PDF muestran la tabla desde Pandas.
+REGLA DE DATOS AUSENTES:
+Si un dato no aparece en DATOS:
+- no lo inventes;
+- no lo calcules;
+- no lo sustituyas por otro indicador;
+- indica que no está disponible cuando corresponda.
+
+No incluyas razonamiento interno, etiquetas <think>, metadatos,
+prompts ni instrucciones internas.
+Tu única tarea es resumir, explicar y redactar.
+Máximo ~220 palabras de prosa.
+NO generes tablas Markdown.
+La UI y el PDF muestran las tablas directamente desde Pandas.
 
 CONSULTA DEL USUARIO:
 {query}
@@ -1939,13 +2010,14 @@ DATOS EXACTOS CALCULADOS POR PANDAS ({len(datos)} filas):
 {json.dumps(datos, ensure_ascii=False)}
 
 REGLAS DE REDACCIÓN:
-1. Usa EXCLUSIVAMENTE los números de DATOS.
+1. Usa EXCLUSIVAMENTE los números de DATOS; cada cifra pegada a su Banco.
 2. Si un indicador/banco aparece en DATOS, no digas que faltan datos de ese ítem.
 3. No inventes causas macroeconómicas ni recomendaciones regulatorias de inversión.
 4. Si piden mayor riesgo: prioriza mayor morosidad; cita cobertura/tarjetas del mismo banco si están en DATOS.
 5. Markdown, 2 decimales, %. NO generes tablas; solo prosa y conclusión.
-6. Conclusión breve (2-4 líneas) solo con números de DATOS; menciona al ganador Ranking=1.
+6. Conclusión breve (2-4 líneas) solo con números de DATOS; menciona al ganador Ranking=1 si existe y no es un agregado.
 7. Si META indica modo_corto, usa viñetas compactas.
+8. Antes de enviar, verifica mentalmente que no intercambiaste ROE/Morosidad/Capital entre bancos.
 """
 
 
