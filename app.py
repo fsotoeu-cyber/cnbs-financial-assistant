@@ -1630,6 +1630,79 @@ def necesita_llm(df_res, query, meta_info):
     return False
 
 
+
+def _es_consulta_equilibrio_texto(query: str) -> bool:
+    q = normalizar_texto(query or "")
+    return any(p in q for p in (
+        "equilibr", "equilibrio", "perfil mas equilibrado", "perfil más equilibrado",
+        "mejor perfil", "score de equilibrio", "score triple",
+    ))
+
+
+def enriquecer_comparacion_con_score(df_res, query=""):
+    """
+    Si la consulta pide equilibrio y df_res es panel largo (Banco/Indicador/Saldo)
+    con ROE + morosidad + capital, calcula Score_Triple por banco (determinístico).
+    Devuelve (df_score o None, resultado dict).
+    """
+    if df_res is None or df_res.empty or not _es_consulta_equilibrio_texto(query):
+        return None, {}
+    if "Score_Triple" in df_res.columns and "Ranking" in df_res.columns:
+        # ya viene rankeado
+        top = df_res.sort_values("Ranking").iloc[0]
+        return None, {
+            "ganador": str(top.get("Banco")),
+            "score_triple": float(top["Score_Triple"]) if pd.notna(top.get("Score_Triple")) else None,
+            "roe": float(top["ROE"]) if "ROE" in top.index and pd.notna(top.get("ROE")) else None,
+            "morosidad": float(top["Morosidad"]) if "Morosidad" in top.index and pd.notna(top.get("Morosidad")) else None,
+            "capital": float(top["Capital"]) if "Capital" in top.index and pd.notna(top.get("Capital")) else None,
+        }
+    cols = set(df_res.columns)
+    if not ({"Banco", "Indicador", "Saldo"} <= cols):
+        return None, {}
+
+    def _pick(ind_sub, label):
+        m = df_res["Indicador"].astype(str).str.contains(ind_sub, case=False, na=False)
+        if label == "roa":
+            m = m & ~df_res["Indicador"].astype(str).str.contains("ROE", case=False, na=False)
+        return df_res.loc[m].groupby("Banco")["Saldo"].mean()
+
+    roe = _pick("ROE", "roe")
+    mora = _pick("MOROSIDAD SOBRE CARTERA CREDITICIA TOTAL", "mora")
+    if mora.empty:
+        mora = _pick("MOROSIDAD", "mora")
+    cap = _pick("ADECUACI", "cap")
+    if roe.empty or mora.empty or cap.empty:
+        return None, {}
+
+    j = pd.DataFrame({"ROE": roe, "Morosidad": mora, "Capital": cap}).dropna()
+    j = j[j["Morosidad"] > 0].copy()
+    if j.empty:
+        return None, {}
+    j["Score_Triple"] = ((j["ROE"] / j["Morosidad"]) * (j["Capital"] / 100.0)).round(2)
+    j["Ratio_ROE_Mora"] = (j["ROE"] / j["Morosidad"]).round(2)
+    j = j.sort_values("Score_Triple", ascending=False).reset_index()
+    j.insert(0, "Ranking", range(1, len(j) + 1))
+    j["ROE"] = j["ROE"].round(2)
+    j["Morosidad"] = j["Morosidad"].round(2)
+    j["Capital"] = j["Capital"].round(2)
+    if "Año" in df_res.columns:
+        try:
+            j["Año"] = int(df_res["Año"].dropna().iloc[0])
+        except Exception:
+            pass
+    top = j.iloc[0]
+    resultado = {
+        "ganador": str(top["Banco"]),
+        "score_triple": float(top["Score_Triple"]),
+        "roe": float(top["ROE"]),
+        "morosidad": float(top["Morosidad"]),
+        "capital": float(top["Capital"]),
+        "criterio": "Score_Triple=(ROE/Morosidad)*(Capital/100)",
+    }
+    return j, resultado
+
+
 def preparar_datos_para_redactor(df_res):
     if df_res is None or df_res.empty:
         return []
@@ -1861,9 +1934,20 @@ def construir_contexto_llm(query, df_res, meta_info, contexto_texto="", resultad
     Capa de gobernanza: el LLM solo explica resultados de Pandas.
     No recalcula, no cambia ranking ni ganador.
     """
-    datos = preparar_datos_para_redactor(df_res)
+    # Si piden equilibrio y el DF es comparación (sin Score), calcular Score_Triple aquí
+    df_para_datos = df_res
     if resultado is None:
-        resultado = extraer_resultado(df_res)
+        resultado = extraer_resultado(df_res) if df_res is not None else {}
+    df_score, res_score = enriquecer_comparacion_con_score(df_res, query)
+    if df_score is not None and not df_score.empty:
+        df_para_datos = df_score
+        # preferir ganador por score de equilibrio
+        if res_score:
+            resultado = {**(resultado or {}), **res_score}
+    elif res_score and res_score.get("ganador"):
+        resultado = {**(resultado or {}), **res_score}
+
+    datos = preparar_datos_para_redactor(df_para_datos)
     ganador = resultado.get("ganador") if resultado else None
 
     bloque_ganador = ""
@@ -1995,6 +2079,22 @@ Tu única tarea es resumir, explicar y redactar.
 Máximo ~220 palabras de prosa.
 NO generes tablas Markdown.
 La UI y el PDF muestran las tablas directamente desde Pandas.
+
+REGLAS ADICIONALES DE NO INFERENCIA:
+- NO introduzcas cifras que no aparezcan literalmente en DATOS.
+- NO agregues datos de otras consultas, ejemplos, historial o conocimiento previo.
+- NO atribuyas causas a cambios financieros si DATOS no contiene evidencia causal.
+- NO hagas afirmaciones regulatorias, normativas o de cumplimiento si no aparecen en DATOS.
+- NO digas que un banco "cumple", "excede", "incumple" o está "por encima del mínimo regulatorio"
+  salvo que ese dato esté explícitamente presente en DATOS.
+- NO determines "mejor equilibrio" mediante interpretación subjetiva.
+  Si la consulta pide equilibrio y existe Score_Triple en DATOS o en RESULTADO DETERMINÍSTICO,
+  utiliza exclusivamente el Score_Triple y el Ranking de Pandas.
+  Si la consulta pide equilibrio y NO hay Score_Triple en DATOS, NO declares un único ganador:
+  describe solo trade-offs con cifras de DATOS o indica que no hay score compuesto en el resultado.
+- NO conviertas Score_Triple en porcentaje. Score_Triple se expresa como valor numérico sin símbolo %.
+- Si la pregunta pide causas, pero DATOS no contiene causas, indica:
+  "Los datos disponibles permiten describir la evolución, pero no determinar su causa."
 
 CONSULTA DEL USUARIO:
 {query}
