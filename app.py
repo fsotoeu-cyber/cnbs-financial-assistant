@@ -1643,39 +1643,46 @@ def enriquecer_comparacion_con_score(df_res, query=""):
     """
     Si la consulta pide equilibrio y df_res es panel largo (Banco/Indicador/Saldo)
     con ROE + morosidad + capital, calcula Score_Triple por banco (determinístico).
+    Incluye ROA si está en el panel (no se usa en la fórmula; solo para el redactor).
     Devuelve (df_score o None, resultado dict).
     """
     if df_res is None or df_res.empty or not _es_consulta_equilibrio_texto(query):
         return None, {}
     if "Score_Triple" in df_res.columns and "Ranking" in df_res.columns:
-        # ya viene rankeado
         top = df_res.sort_values("Ranking").iloc[0]
-        return None, {
+        out = {
             "ganador": str(top.get("Banco")),
             "score_triple": float(top["Score_Triple"]) if pd.notna(top.get("Score_Triple")) else None,
             "roe": float(top["ROE"]) if "ROE" in top.index and pd.notna(top.get("ROE")) else None,
             "morosidad": float(top["Morosidad"]) if "Morosidad" in top.index and pd.notna(top.get("Morosidad")) else None,
             "capital": float(top["Capital"]) if "Capital" in top.index and pd.notna(top.get("Capital")) else None,
         }
+        if "ROA" in top.index and pd.notna(top.get("ROA")):
+            out["roa"] = float(top["ROA"])
+        return None, out
     cols = set(df_res.columns)
     if not ({"Banco", "Indicador", "Saldo"} <= cols):
         return None, {}
 
-    def _pick(ind_sub, label):
+    def _pick(ind_sub, mode="default"):
         m = df_res["Indicador"].astype(str).str.contains(ind_sub, case=False, na=False)
-        if label == "roa":
+        if mode == "roa":
             m = m & ~df_res["Indicador"].astype(str).str.contains("ROE", case=False, na=False)
         return df_res.loc[m].groupby("Banco")["Saldo"].mean()
 
-    roe = _pick("ROE", "roe")
-    mora = _pick("MOROSIDAD SOBRE CARTERA CREDITICIA TOTAL", "mora")
+    roe = _pick("ROE")
+    mora = _pick("MOROSIDAD SOBRE CARTERA CREDITICIA TOTAL")
     if mora.empty:
-        mora = _pick("MOROSIDAD", "mora")
-    cap = _pick("ADECUACI", "cap")
+        mora = _pick("MOROSIDAD")
+    cap = _pick("ADECUACI")
+    roa = _pick("ROA", mode="roa")
     if roe.empty or mora.empty or cap.empty:
         return None, {}
 
-    j = pd.DataFrame({"ROE": roe, "Morosidad": mora, "Capital": cap}).dropna()
+    j = pd.DataFrame({"ROE": roe, "Morosidad": mora, "Capital": cap})
+    if not roa.empty:
+        j["ROA"] = roa
+    j = j.dropna(subset=["ROE", "Morosidad", "Capital"])
     j = j[j["Morosidad"] > 0].copy()
     if j.empty:
         return None, {}
@@ -1683,9 +1690,9 @@ def enriquecer_comparacion_con_score(df_res, query=""):
     j["Ratio_ROE_Mora"] = (j["ROE"] / j["Morosidad"]).round(2)
     j = j.sort_values("Score_Triple", ascending=False).reset_index()
     j.insert(0, "Ranking", range(1, len(j) + 1))
-    j["ROE"] = j["ROE"].round(2)
-    j["Morosidad"] = j["Morosidad"].round(2)
-    j["Capital"] = j["Capital"].round(2)
+    for c in ("ROE", "Morosidad", "Capital", "ROA", "Score_Triple", "Ratio_ROE_Mora"):
+        if c in j.columns:
+            j[c] = j[c].round(2)
     if "Año" in df_res.columns:
         try:
             j["Año"] = int(df_res["Año"].dropna().iloc[0])
@@ -1700,7 +1707,10 @@ def enriquecer_comparacion_con_score(df_res, query=""):
         "capital": float(top["Capital"]),
         "criterio": "Score_Triple=(ROE/Morosidad)*(Capital/100)",
     }
+    if "ROA" in top.index and pd.notna(top.get("ROA")):
+        resultado["roa"] = float(top["ROA"])
     return j, resultado
+
 
 
 def preparar_datos_para_redactor(df_res):
@@ -1721,6 +1731,8 @@ def preparar_datos_para_redactor(df_res):
                 "Score_Triple": round(float(row["Score_Triple"]), 2)
                 if pd.notna(row.get("Score_Triple")) else None,
             }
+            if "ROA" in row.index and pd.notna(row.get("ROA")):
+                item["ROA"] = round(float(row["ROA"]), 2)
             if "Año" in row.index and pd.notna(row.get("Año")):
                 item["Año"] = int(row["Año"])
             if "TipoInstitucion" in row.index and pd.notna(row.get("TipoInstitucion")):
@@ -2093,8 +2105,11 @@ REGLAS ADICIONALES DE NO INFERENCIA:
   Si la consulta pide equilibrio y NO hay Score_Triple en DATOS, NO declares un único ganador:
   describe solo trade-offs con cifras de DATOS o indica que no hay score compuesto en el resultado.
 - NO conviertas Score_Triple en porcentaje. Score_Triple se expresa como valor numérico sin símbolo %.
-- Si la pregunta pide causas, pero DATOS no contiene causas, indica:
+- Si la pregunta pide causas, pero DATOS no contiene causas, responde con la evolución
+  numérica de DATOS y añade exactamente:
   "Los datos disponibles permiten describir la evolución, pero no determinar su causa."
+  NO listes posibles factores (provisiones, costos, dividendos, expansión del balance, etc.)
+  si no están en DATOS.
 
 CONSULTA DEL USUARIO:
 {query}
